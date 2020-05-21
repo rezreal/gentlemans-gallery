@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "projects": {
+    "gentlemens-gallery": {
+      "root": "apps/gentlemens-gallery",
+      "sourceRoot": "apps/gentlemens-gallery/src",
+      "projectType": "application",
+      "schematics": {},
+      "architect": {
+        "build": {
+          "builder": "@nrwl/web:build",
+          "options": {
+            "outputPath": "dist/apps/gentlemens-gallery",
+            "index": "apps/gentlemens-gallery/src/index.html",
+            "main": "apps/gentlemens-gallery/src/main.tsx",
+            "polyfills": "apps/gentlemens-gallery/src/polyfills.ts",
+            "tsConfig": "apps/gentlemens-gallery/tsconfig.app.json",
+            "assets": [
+              "apps/gentlemens-gallery/src/favicon.ico",
+              "apps/gentlemens-gallery/src/assets"
+            ],
+            "styles": ["apps/gentlemens-gallery/src/styles.css"],
+            "scripts": [],
+            "webpackConfig": "@nrwl/react/plugins/webpack"
+          },
+          "configurations": {
+            "production": {
+              "fileReplacements": [
+                {
+                  "replace": "apps/gentlemens-gallery/src/environments/environment.ts",
+                  "with": "apps/gentlemens-gallery/src/environments/environment.prod.ts"
+                }
+              ],
+              "optimization": true,
+              "outputHashing": "all",
+              "sourceMap": false,
+              "extractCss": true,
+              "namedChunks": false,
+              "extractLicenses": true,
+              "vendorChunk": false,
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "2mb",
+                  "maximumError": "5mb"
+                }
+              ]
+            }
+          }
+        },
+        "serve": {
+          "builder": "@nrwl/web:dev-server",
+          "options": {
+            "buildTarget": "gentlemens-gallery:build"
+          },
+          "configurations": {
+            "production": {
+              "buildTarget": "gentlemens-gallery:build:production"
+            }
+          }
+        },
+        "lint": {
+          "builder": "@nrwl/linter:lint",
+          "options": {
+            "linter": "eslint",
+            "config": "apps/gentlemens-gallery/.eslintrc",
+            "tsConfig": [
+              "apps/gentlemens-gallery/tsconfig.app.json",
+              "apps/gentlemens-gallery/tsconfig.spec.json"
+            ],
+            "exclude": ["**/node_modules/**", "!apps/gentlemens-gallery/**"]
+          }
+        },
+        "test": {
+          "builder": "@nrwl/jest:jest",
+          "options": {
+            "jestConfig": "apps/gentlemens-gallery/jest.config.js",
+            "tsConfig": "apps/gentlemens-gallery/tsconfig.spec.json",
+            "passWithNoTests": true
+          }
+        }
+      }
+    },
+    "gentlemens-gallery-e2e": {
+      "root": "apps/gentlemens-gallery-e2e",
+      "sourceRoot": "apps/gentlemens-gallery-e2e/src",
+      "projectType": "application",
+      "architect": {
+        "e2e": {
+          "builder": "@nrwl/cypress:cypress",
+          "options": {
+            "cypressConfig": "apps/gentlemens-gallery-e2e/cypress.json",
+            "tsConfig": "apps/gentlemens-gallery-e2e/tsconfig.e2e.json",
+            "devServerTarget": "gentlemens-gallery:serve"
+          },
+          "configurations": {
+            "production": {
+              "devServerTarget": "gentlemens-gallery:serve:production"
+            }
+          }
+        },
+        "lint": {
+          "builder": "@nrwl/linter:lint",
+          "options": {
+            "linter": "eslint",
+            "config": "apps/gentlemens-gallery-e2e/.eslintrc",
+            "tsConfig": ["apps/gentlemens-gallery-e2e/tsconfig.e2e.json"],
+            "exclude": ["**/node_modules/**", "!apps/gentlemens-gallery-e2e/**"]
+          }
+        }
+      }
+    }
+  },
+  "cli": {
+    "defaultCollection": "@nrwl/react"
+  },
+  "schematics": {
+    "@nrwl/workspace": {
+      "library": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/cypress": {
+      "cypress-project": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/react": {
+      "application": {
+        "style": "css",
+        "linter": "eslint",
+        "babel": true
+      },
+      "library": {
+        "style": "css",
+        "linter": "eslint"
+      },
+      "storybook-configuration": {
+        "linter": "eslint"
+      },
+      "component": {
+        "style": "css"
+      }
+    },
+    "@nrwl/next": {
+      "application": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/web": {
+      "application": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/node": {
+      "application": {
+        "linter": "eslint"
+      },
+      "library": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/nx-plugin": {
+      "plugin": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/nest": {
+      "application": {
+        "linter": "eslint"
+      }
+    },
+    "@nrwl/express": {
+      "application": {
+        "linter": "eslint"
+      },
+      "library": {
+        "linter": "eslint"
+      }
+    }
+  },
+  "defaultProject": "gentlemens-gallery"
+}
