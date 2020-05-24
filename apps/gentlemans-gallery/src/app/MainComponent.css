@@ -28,7 +28,7 @@
 }
 
 #renderPane.softfocus{
-  transition: filter 0.25s;
+  transition: filter 0.1s;
   filter: saturate(200%);
 }
 

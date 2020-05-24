@@ -170,7 +170,7 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private punish(level: 'SOFT' | 'HARD') {
-    const errorIncrease = level === 'SOFT' ? 5 : 10;
+    const errorIncrease = level === 'SOFT' ? 1 : 10;
 
     if (level === 'HARD') {
       this.setState((prev) => ({
