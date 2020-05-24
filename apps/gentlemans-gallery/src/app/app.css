@@ -28,6 +28,10 @@
   color: white;
   padding: 5px;
   border-radius: 3px;
+  position: fixed;
+  top: 0px;
+  left: 0px;
+  width: 100%;
 }
 
 .app main {
@@ -50,28 +54,6 @@
   margin: 40px 0 10px 0;
 }
 
-.app .resources {
-  text-align: center;
-  list-style: none;
-  padding: 0;
-  display: grid;
-  grid-gap: 9px;
-  grid-template-columns: 1fr 1fr;
-}
-
-.app .resource {
-  color: #0094ba;
-  height: 36px;
-  background-color: rgba(0, 0, 0, 0);
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 4px;
-  padding: 3px 9px;
-  text-decoration: none;
-}
-
-.app .resource:hover {
-  background-color: rgba(68, 138, 255, 0.04);
-}
 
 .app pre {
   padding: 9px;
@@ -87,6 +69,7 @@
   border: 1px solid rgba(0, 0, 0, 0.12);
   padding: 3px 9px;
   margin-bottom: 9px;
+  margin-top: 30px;
 }
 
 .app summary {

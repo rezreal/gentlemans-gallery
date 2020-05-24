@@ -1,0 +1,28 @@
+#renderPane {
+  user-select: none;
+}
+
+#renderPane.fadein{
+
+  animation: blur 1s ease-in;
+
+}
+
+@keyframes blur {
+  0% {
+    filter: blur(10px);
+  }
+  100% {
+    filter: blur(0px);
+  }
+}
+
+#renderPane {
+  transition: transform 0.2s ease-out; /* Animation */
+}
+
+#renderPane.fadeout{
+  transition: transform 4.5s ease-in;
+  transform: scale(1.5);
+}
+

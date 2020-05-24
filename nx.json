@@ -19,12 +19,15 @@
     }
   },
   "projects": {
-    "gentlemens-gallery": {
+    "gentlemans-gallery": {
       "tags": []
     },
-    "gentlemens-gallery-e2e": {
+    "gentlemans-gallery-e2e": {
       "tags": [],
-      "implicitDependencies": ["gentlemens-gallery"]
+      "implicitDependencies": ["gentlemans-gallery"]
+    },
+    "ui": {
+      "tags": []
     }
   }
 }
