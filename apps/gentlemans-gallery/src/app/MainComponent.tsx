@@ -24,6 +24,7 @@ interface State {
   cursorPosition: { x: number; y: number };
   cursorHint?: 'NEXT' | 'SOFT' | 'HARD';
   points: number;
+  won: boolean;
 }
 
 export class MainComponent extends Component<Props, State> {
@@ -34,6 +35,7 @@ export class MainComponent extends Component<Props, State> {
       jsonFiles: {},
       cursorPosition: { x: 0, y: 0 },
       points: 0,
+      won: false,
     };
     this.handleFileSelection = this.handleFileSelection.bind(this);
     this.nextImage = this.nextImage.bind(this);
@@ -123,6 +125,8 @@ export class MainComponent extends Component<Props, State> {
           case 'NEXT':
             this.nextImage(false);
             break;
+          case undefined:
+            break;
           default:
             this.punish(zone);
         }
@@ -170,12 +174,10 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private punish(level: 'SOFT' | 'HARD') {
-    const errorIncrease = level === 'SOFT' ? 1 : 10;
-
     if (level === 'HARD') {
       this.setState((prev) => ({
         ...prev,
-        points: prev.points - errorIncrease,
+        points: prev.points - 10,
         currentImage: Math.max(0, prev.currentImage - 1),
         currentImageData: window.URL.createObjectURL(
           prev.imageFiles[Math.max(0, prev.currentImage - 1)]
@@ -186,16 +188,24 @@ export class MainComponent extends Component<Props, State> {
           ],
       }));
       this.pauseUntil = Date.now() + 1200;
-    } else {
+    } else if (level === 'SOFT') {
       this.setState((prev) => ({
         ...prev,
-        points: prev.points - errorIncrease,
+        points: prev.points - 1,
       }));
     }
   }
 
   private nextImage(skipped: boolean) {
     const nextIndex = (this.state.currentImage ?? -1) + 1;
+    if ((nextIndex) => this.state.imageFiles.length) {
+      this.setState((prev) => ({
+        ...prev,
+        won: true,
+      }));
+      return;
+    }
+
     this.setState((prev) => ({
       ...prev,
       points: prev.points + (skipped ? -5 : 20),
@@ -348,12 +358,16 @@ export class MainComponent extends Component<Props, State> {
         </header>
         <main>
           <div className="flex">
-            <img
-              id="renderPane"
-              ref={this.renderPane}
-              src={this.state.currentImageData}
-              onMouseMove={this.handleMouseMoveOnPane}
-            ></img>
+            {this.state.won ? (
+              <h1>You won! Your score: {this.state.points}</h1>
+            ) : (
+              <img
+                id="renderPane"
+                ref={this.renderPane}
+                src={this.state.currentImageData}
+                onMouseMove={this.handleMouseMoveOnPane}
+              ></img>
+            )}
             <Cursor
               size={200}
               position={this.state.cursorPosition}
