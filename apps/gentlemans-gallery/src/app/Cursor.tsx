@@ -1,16 +1,8 @@
-import { PurifyMetadata } from './purify';
 import {
-  Component,
-  ChangeEvent,
-  MouseEvent,
-  RefObject,
-  Ref,
   FunctionComponent,
 } from 'react';
 import React from 'react';
-import { ReactComponent as Logo } from './logo.svg';
-import { render } from 'react-dom';
-import './cursor.css';
+import './Cursor.css';
 
 function calculateStyle(size: number, position: {x:number, y:number}) {
   return {
