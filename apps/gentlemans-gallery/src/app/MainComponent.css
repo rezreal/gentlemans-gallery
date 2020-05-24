@@ -19,10 +19,21 @@
 
 #renderPane {
   transition: transform 0.2s ease-out; /* Animation */
+  border-radius: 0px;
 }
 
 #renderPane.fadeout{
   transition: transform 4.5s ease-in;
-  transform: scale(1.5);
+  transform: scale(2);
 }
 
+#renderPane.softfocus{
+  transition: filter 0.25s;
+  filter: saturate(200%);
+}
+
+#renderPane.hardfocus{
+  transition: transform 0.25s ease-in, filter 0.25s;
+  transform: scale(4);
+  filter: saturate(200%);
+}

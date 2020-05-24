@@ -21,6 +21,6 @@ interface Props {
 
 export const Cursor: FunctionComponent<Props> = ({ position, size, hint }) => (
   <div className="cursor" data-hint={hint} style={calculateStyle(size, position)}>
-    <div className="lds-ripple" ><div></div><div></div><div></div><div></div></div>
+    <div className="lds-ripple" ></div>
   </div>
 );

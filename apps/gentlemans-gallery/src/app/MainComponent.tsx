@@ -39,6 +39,7 @@ export class MainComponent extends Component<Props, State> {
     this.nextImage = this.nextImage.bind(this);
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
     this.renderPane = React.createRef();
+    this.fileSelector = React.createRef();
   }
 
   gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject(
@@ -49,12 +50,9 @@ export class MainComponent extends Component<Props, State> {
   pauseUntil: number = 0;
 
   componentDidMount(): void {
-    (this.fileSelector.current as any).webkitdirectory="true";
+    (this.fileSelector.current as any).webkitdirectory = 'true';
 
     const ws = new WebSocket('ws://localhost:8887', ['Tobii.Interaction']);
-
-
-
 
     ws.onmessage = (m) => {
       const parsed = JSON.parse(m.data) as ProtocolFrame;
@@ -81,7 +79,6 @@ export class MainComponent extends Component<Props, State> {
       ws.send('startEyePosition');
     };
 
-
     this.gazeHits$
       .pipe(
         takeUntil(this.destroy$),
@@ -92,27 +89,39 @@ export class MainComponent extends Component<Props, State> {
             console.info(`delay until ${delayUntil}`);
             return of(false).pipe(delay(delayUntil));
           },
-          { leading: true, trailing: false }
+          { leading: true, trailing: true }
         ),
         map(MainComponent.detectionToZone),
         tap((zone) => {
           this.renderPane.current.classList.remove('fadeout');
+          this.renderPane.current.classList.remove('hardfocus');
           if (zone === 'NEXT') {
             void this.renderPane.current.offsetWidth;
             this.renderPane.current.classList.add('fadeout');
+          }
+          if (zone === 'HARD') {
+            void this.renderPane.current.offsetWidth;
+            this.renderPane.current.classList.add('hardfocus');
+          }
+          if (zone === 'SOFT') {
+            this.renderPane.current.classList.add('softfocus');
+          } else {
+            this.renderPane.current.classList.remove('softfocus');
           }
         }),
         switchMap((zone) => of(zone).pipe(delay(zone === 'NEXT' ? 4500 : 250))),
         tap((zone) => {
           if (zone === 'NEXT') {
             this.renderPane.current.classList.remove('fadeout');
+          } else if (zone === 'HARD') {
+            this.renderPane.current.classList.remove('hardfocus');
           }
         })
       )
       .subscribe((zone) => {
         switch (zone) {
           case 'NEXT':
-            this.nextImage();
+            this.nextImage(false);
             break;
           default:
             this.punish(zone);
@@ -176,6 +185,7 @@ export class MainComponent extends Component<Props, State> {
             prev.imageFiles[Math.max(0, prev.currentImage - 1)].name
           ],
       }));
+      this.pauseUntil = Date.now() + 1200;
     } else {
       this.setState((prev) => ({
         ...prev,
@@ -184,11 +194,11 @@ export class MainComponent extends Component<Props, State> {
     }
   }
 
-  private nextImage() {
+  private nextImage(skipped: boolean) {
     const nextIndex = (this.state.currentImage ?? -1) + 1;
     this.setState((prev) => ({
       ...prev,
-      points: prev.points + 5,
+      points: prev.points + (skipped ? -5 : 20),
       currentImage: nextIndex,
       currentImageData: window.URL.createObjectURL(prev.imageFiles[nextIndex]),
       currentJson: prev.jsonFiles[prev.imageFiles[nextIndex].name],
@@ -217,12 +227,17 @@ export class MainComponent extends Component<Props, State> {
       x: clientCoordinates.x - imageCoords.x,
       y: clientCoordinates.y - imageCoords.y,
     };
+    const rScaledToBoundingBox = {
+      x: (r.x * renderPane.naturalWidth) / imageCoords.width,
+      y: (r.y * renderPane.naturalHeight) / imageCoords.height,
+    };
+
     const tolerance = MainComponent.imageSize(renderPane) * 0.05;
     const hit = this.state.currentJson.output.detections.find((detection) => {
       const rect = MainComponent.purifyBoundingBoxToRectangle(
         detection.bounding_box
       );
-      return MainComponent.distance(rect, r) < tolerance;
+      return MainComponent.distance(rect, rScaledToBoundingBox) < tolerance;
     });
 
     if (hit) {
@@ -242,12 +257,15 @@ export class MainComponent extends Component<Props, State> {
     this.setState((prev) => ({
       ...prev,
       cursorPosition: clientCoordinates,
-      cursorHint: hit ? MainComponent.detectionToZone(hit.name) : undefined,
+      cursorHint:
+        this.pauseUntil < Date.now() && hit
+          ? MainComponent.detectionToZone(hit.name)
+          : undefined,
     }));
   }
 
   private static imageSize(element: HTMLImageElement) {
-    return Math.max(element.width, element.height);
+    return Math.max(element.naturalWidth, element.naturalHeight);
   }
 
   private static distance(r: DOMRect, p: { x: number; y: number }) {
@@ -312,7 +330,8 @@ export class MainComponent extends Component<Props, State> {
         jsonFiles: jsons,
       }));
 
-      this.nextImage();
+      this.pauseUntil = Date.now() + 1000;
+      this.nextImage(false);
     });
   }
 
@@ -321,6 +340,11 @@ export class MainComponent extends Component<Props, State> {
       <div className="app">
         <header>
           <h5>Points: {this.state.points}</h5>
+          {this.state.imageFiles.length > 0 ? (
+            <button onClick={() => this.nextImage(true)}>Skip Image</button>
+          ) : (
+            ''
+          )}
         </header>
         <main>
           <div className="flex">
@@ -335,11 +359,6 @@ export class MainComponent extends Component<Props, State> {
               position={this.state.cursorPosition}
               hint={this.state.cursorHint}
             ></Cursor>
-            {this.state.imageFiles.length > 0 ? (
-              <button onClick={() => this.nextImage()}>Skip Image</button>
-            ) : (
-              ''
-            )}
           </div>
           <details open>
             <summary>Rules</summary>
@@ -367,11 +386,13 @@ export class MainComponent extends Component<Props, State> {
               folder into a single directory and select it here.
             </p>
             <input
-            ref={this.fileSelector}
+              ref={this.fileSelector}
               type="file"
               onChange={(e) => this.handleFileSelection(e)}
             ></input>
-            <p>Suggestions/PRs for a public domain sample gallery are welcome!</p>
+            <p>
+              Suggestions/PRs for a public domain sample gallery are welcome!
+            </p>
           </details>
           <details>
             <summary>Configure MQTT</summary>
