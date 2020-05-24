@@ -23,7 +23,7 @@
   width: 180px;
   height: 180px;
   opacity: 0.7;
-  border-color: #00000000;
+ 
 }
 
 .lds-ripple div:not(:first-child) {

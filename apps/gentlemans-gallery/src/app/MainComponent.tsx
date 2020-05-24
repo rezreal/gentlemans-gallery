@@ -198,17 +198,19 @@ export class MainComponent extends Component<Props, State> {
 
   private nextImage(skipped: boolean) {
     const nextIndex = (this.state.currentImage ?? -1) + 1;
-    if ((nextIndex) => this.state.imageFiles.length) {
+
+  /*
+    if (nextIndex => this.state.imageFiles.length && this.state.imageFiles.length > 0) {
       this.setState((prev) => ({
         ...prev,
         won: true,
       }));
       return;
-    }
+    }*/
 
     this.setState((prev) => ({
       ...prev,
-      points: prev.points + (skipped ? -5 : 20),
+      points: prev.points + (skipped ? -10 : 20),
       currentImage: nextIndex,
       currentImageData: window.URL.createObjectURL(prev.imageFiles[nextIndex]),
       currentJson: prev.jsonFiles[prev.imageFiles[nextIndex].name],
@@ -243,7 +245,7 @@ export class MainComponent extends Component<Props, State> {
     };
 
     const tolerance = MainComponent.imageSize(renderPane) * 0.05;
-    const hit = this.state.currentJson.output.detections.find((detection) => {
+    const hit = this.state.currentJson?.output.detections.find((detection) => {
       const rect = MainComponent.purifyBoundingBoxToRectangle(
         detection.bounding_box
       );
@@ -360,14 +362,13 @@ export class MainComponent extends Component<Props, State> {
           <div className="flex">
             {this.state.won ? (
               <h1>You won! Your score: {this.state.points}</h1>
-            ) : (
-              <img
+            ) : ('')}
+             <img
                 id="renderPane"
                 ref={this.renderPane}
                 src={this.state.currentImageData}
                 onMouseMove={this.handleMouseMoveOnPane}
               ></img>
-            )}
             <Cursor
               size={200}
               position={this.state.cursorPosition}
