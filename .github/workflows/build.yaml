@@ -24,5 +24,5 @@ jobs:
       with:
         ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
         BRANCH: gh-pages # The branch the action should deploy to.
-        FOLDER: dist/apps/gentlemans-gallery # The folder the action should deploy.
+        FOLDER: dist/apps # The folder the action should deploy.
         SINGLE_COMMIT: true
