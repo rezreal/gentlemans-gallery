@@ -3,6 +3,7 @@ export type MaleDetections = "FACE_MALE" | "MALE_GENITALIA_EXPOSED" | "MALE_GENI
 export type FemaleDetections = "FACE_FEMALE" |"FEMALE_BREAST_EXPOSED" | "FEMALE_BREAST_COVERED" | "FEMALE_GENITALIA_EXPOSED" | "FEMALE_GENITALIA_COVERED"
 export type DetectionType = MaleDetections | FemaleDetections | NeutralDetections
 
+
 export interface PurifyDetection {
   /**
    * y1, x1, y2, x2

@@ -3,7 +3,7 @@
   padding: 0px;
   margin: 0px;
   pointer-events: none;
-
+  z-index: 999;
 }
 
 .lds-ripple {
@@ -23,7 +23,7 @@
   width: 180px;
   height: 180px;
   opacity: 0.7;
- 
+
 }
 
 .lds-ripple div:not(:first-child) {

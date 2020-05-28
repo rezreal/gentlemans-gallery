@@ -14,8 +14,44 @@ import {
 import { Cursor } from './Cursor';
 import './MainComponent.css';
 
+import * as buffer from 'buffer';
+
+(window as any).Buffer = buffer;
+
+import { connect, MqttClient } from 'mqtt';
+
 interface Props {}
+
+type TopicWithMessage = {
+  name: string;
+  message: string;
+};
+
+interface Rules {
+  focusDuration: number;
+  focusRegions: DetectionType[];
+  softPunishRegions: DetectionType[];
+  hardPunishRegions: DetectionType[];
+  showGaze: boolean;
+  allowSkipImage: boolean;
+}
+
 interface State {
+  mqtt: {
+    server?: string;
+    clientId?: string;
+    auth: boolean;
+    username?: string;
+    password?: string;
+    topics: {
+      teaseTopic?: TopicWithMessage;
+      punishTopic?: TopicWithMessage;
+      renewRestraint?: TopicWithMessage;
+      unlockRestraint?: TopicWithMessage;
+    };
+  };
+  rules: Rules;
+  tobiiServer?: string;
   imageFiles: File[];
   jsonFiles: { [_: string]: PurifyMetadata };
   currentImage?: number;
@@ -24,18 +60,50 @@ interface State {
   cursorPosition: { x: number; y: number };
   cursorHint?: 'NEXT' | 'SOFT' | 'HARD';
   points: number;
-  won: boolean;
+  phase: 'SETUP' | 'INGAME' | 'WON';
+  pauseUntil: number;
 }
+
+const defaultRules: Rules = {
+  focusDuration: 5,
+  focusRegions: ['FACE_FEMALE', 'FACE_MALE'],
+  softPunishRegions: [
+    'FEMALE_BREAST_COVERED',
+    'FEMALE_GENITALIA_COVERED',
+    'BUTTOCKS_EXPOSED',
+  ],
+  hardPunishRegions: [
+    'MALE_GENITALIA_EXPOSED',
+    'MALE_BREAST_EXPOSED',
+    'FEMALE_BREAST_EXPOSED',
+    'FEMALE_GENITALIA_EXPOSED',
+    'ANUS_EXPOSED',
+  ],
+  showGaze: true,
+  allowSkipImage: true,
+};
 
 export class MainComponent extends Component<Props, State> {
   constructor(props) {
     super(props);
     this.state = {
+      mqtt: {
+        server: 'mqtts:://test.mosquitto.org:8081',
+        topics: {},
+        auth: false,
+        ...JSON.parse(localStorage.getItem('mqtt') || '{}'),
+      },
+      rules: {
+        ...defaultRules,
+        ...JSON.parse(localStorage.getItem('rules') || '{}'),
+      },
+      tobiiServer: 'ws://localhost:8887',
       imageFiles: [],
       jsonFiles: {},
       cursorPosition: { x: 0, y: 0 },
       points: 0,
-      won: false,
+      phase: 'SETUP',
+      pauseUntil: 0,
     };
     this.handleFileSelection = this.handleFileSelection.bind(this);
     this.nextImage = this.nextImage.bind(this);
@@ -49,12 +117,11 @@ export class MainComponent extends Component<Props, State> {
   );
   eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject(false);
   destroy$: Subject<unknown> = new Subject<unknown>();
-  pauseUntil: number = 0;
 
-  componentDidMount(): void {
-    (this.fileSelector.current as any).webkitdirectory = 'true';
+  tobiiWs: WebSocket | undefined;
 
-    const ws = new WebSocket('ws://localhost:8887', ['Tobii.Interaction']);
+  private startTobii(): void {
+    const ws = new WebSocket(this.state.tobiiServer, ['Tobii.Interaction']);
 
     ws.onmessage = (m) => {
       const parsed = JSON.parse(m.data) as ProtocolFrame;
@@ -80,6 +147,23 @@ export class MainComponent extends Component<Props, State> {
       ws.send('startGazePoint');
       ws.send('startEyePosition');
     };
+    this.tobiiWs = ws;
+  }
+
+  startMqtt() {
+    /*
+    const client: MqttClient = connect(`${this.state.mqtt.server}`, {
+      username: this.state.mqtt.username,
+      password: this.state.mqtt.password,
+    });
+
+    client.on('connect', (c) => {
+      console.info(`connected to ${this.state.mqtt.server}`);
+    });*/
+  }
+
+  componentDidMount(): void {
+    (this.fileSelector.current as any).webkitdirectory = 'true';
 
     this.gazeHits$
       .pipe(
@@ -87,13 +171,12 @@ export class MainComponent extends Component<Props, State> {
         distinctUntilChanged(),
         throttle(
           () => {
-            const delayUntil = Math.max(0, this.pauseUntil - Date.now());
-            console.info(`delay until ${delayUntil}`);
+            const delayUntil = Math.max(0, this.state.pauseUntil - Date.now());
             return of(false).pipe(delay(delayUntil));
           },
           { leading: true, trailing: true }
         ),
-        map(MainComponent.detectionToZone),
+        map((z) => this.detectionToZone(z)),
         tap((zone) => {
           this.renderPane.current.classList.remove('fadeout');
           this.renderPane.current.classList.remove('hardfocus');
@@ -111,7 +194,11 @@ export class MainComponent extends Component<Props, State> {
             this.renderPane.current.classList.remove('softfocus');
           }
         }),
-        switchMap((zone) => of(zone).pipe(delay(zone === 'NEXT' ? 4500 : 250))),
+        switchMap((zone) =>
+          of(zone).pipe(
+            delay(zone === 'NEXT' ? this.state.rules.focusDuration * 1000 : 250)
+          )
+        ),
         tap((zone) => {
           if (zone === 'NEXT') {
             this.renderPane.current.classList.remove('fadeout');
@@ -136,6 +223,10 @@ export class MainComponent extends Component<Props, State> {
 
   componentWillUnmount() {
     this.destroy$.next();
+
+    if (this.tobiiWs) {
+      this.tobiiWs.close();
+    }
   }
 
   private readonly renderPane: RefObject<HTMLImageElement>;
@@ -151,43 +242,36 @@ export class MainComponent extends Component<Props, State> {
     return path.substring(path.lastIndexOf('\\') + 1);
   }
 
-  private static detectionToZone(
+  private detectionToZone(
     name: DetectionType
   ): 'NEXT' | 'SOFT' | 'HARD' | undefined {
-    switch (name) {
-      case 'FACE_FEMALE':
-      case 'FACE_MALE':
-        return 'NEXT';
-      case 'FEMALE_BREAST_COVERED':
-      case 'FEMALE_GENITALIA_COVERED':
-      case 'BUTTOCKS_EXPOSED':
-        return 'SOFT';
-      case 'MALE_GENITALIA_EXPOSED':
-      case 'MALE_BREAST_EXPOSED':
-      case 'FEMALE_BREAST_EXPOSED':
-      case 'FEMALE_GENITALIA_EXPOSED':
-      case 'ANUS_EXPOSED':
-        return 'HARD';
-      default:
-        return undefined;
+    if (this.state.rules.focusRegions.some((e) => e === name)) {
+      return 'NEXT';
     }
+
+    if (this.state.rules.hardPunishRegions.some((e) => e === name)) {
+      return 'HARD';
+    }
+
+    if (this.state.rules.softPunishRegions.some((e) => e === name)) {
+      return 'SOFT';
+    }
+    return undefined;
   }
 
   private punish(level: 'SOFT' | 'HARD') {
     if (level === 'HARD') {
-      this.setState((prev) => ({
-        ...prev,
-        points: prev.points - 10,
-        currentImage: Math.max(0, prev.currentImage - 1),
+      this.setState({
+        points: this.state.points - 10,
+        currentImage: Math.max(0, this.state.currentImage - 1),
         currentImageData: window.URL.createObjectURL(
-          prev.imageFiles[Math.max(0, prev.currentImage - 1)]
+          this.state.imageFiles[Math.max(0, this.state.currentImage - 1)]
         ),
-        currentJson:
-          prev.jsonFiles[
-            prev.imageFiles[Math.max(0, prev.currentImage - 1)].name
-          ],
-      }));
-      this.pauseUntil = Date.now() + 1200;
+        currentJson: this.state.jsonFiles[
+          this.state.imageFiles[Math.max(0, this.state.currentImage - 1)].name
+        ],
+      });
+      this.setState({ pauseUntil: Date.now() + 1200 });
     } else if (level === 'SOFT') {
       this.setState((prev) => ({
         ...prev,
@@ -199,26 +283,23 @@ export class MainComponent extends Component<Props, State> {
   private nextImage(skipped: boolean) {
     const nextIndex = (this.state.currentImage ?? -1) + 1;
 
-  /*
-    if (nextIndex => this.state.imageFiles.length && this.state.imageFiles.length > 0) {
-      this.setState((prev) => ({
-        ...prev,
-        won: true,
-      }));
+    if (nextIndex >= this.state.imageFiles.length) {
+      this.setState({ phase: 'WON' });
       return;
-    }*/
+    }
 
-    this.setState((prev) => ({
-      ...prev,
-      points: prev.points + (skipped ? -10 : 20),
+    this.setState({
+      points: this.state.points + (skipped ? -10 : 20),
       currentImage: nextIndex,
-      currentImageData: window.URL.createObjectURL(prev.imageFiles[nextIndex]),
-      currentJson: prev.jsonFiles[prev.imageFiles[nextIndex].name],
-    }));
+      currentImageData: window.URL.createObjectURL(
+        this.state.imageFiles[nextIndex]
+      ),
+      currentJson: this.state.jsonFiles[this.state.imageFiles[nextIndex].name],
+    });
     this.renderPane.current.classList.remove('fadein');
     void this.renderPane.current.offsetWidth;
     this.renderPane.current.classList.add('fadein');
-    this.pauseUntil = Date.now() + 1000;
+    this.setState({ pauseUntil: Date.now() + 1000 });
   }
 
   private handleMqttSubmit() {}
@@ -266,14 +347,13 @@ export class MainComponent extends Component<Props, State> {
 
     this.gazeHits$.next(hit?.name);
 
-    this.setState((prev) => ({
-      ...prev,
+    this.setState({
       cursorPosition: clientCoordinates,
       cursorHint:
-        this.pauseUntil < Date.now() && hit
-          ? MainComponent.detectionToZone(hit.name)
+        this.state.pauseUntil < Date.now() && hit
+          ? this.detectionToZone(hit.name)
           : undefined,
-    }));
+    });
   }
 
   private static imageSize(element: HTMLImageElement) {
@@ -327,111 +407,441 @@ export class MainComponent extends Component<Props, State> {
     );
 
     loadedJsons.then((jsons) => {
-      const imageFile = imageFiles[0];
       const imageFilesWithFaces = imageFiles.filter((file) =>
         jsons[file.name]?.output.detections.some(
           // image must have at least one zone to continue
-          (detection) =>
-            MainComponent.detectionToZone(detection.name) === 'NEXT'
+          (detection) => this.detectionToZone(detection.name) === 'NEXT'
         )
       );
-
-      this.setState((prev) => ({
-        ...prev,
+      this.setState({
         imageFiles: imageFilesWithFaces,
         jsonFiles: jsons,
-      }));
-
-      this.pauseUntil = Date.now() + 1000;
-      this.nextImage(false);
+      });
     });
+  }
+
+  startGame(): void {
+    if (this.state.tobiiServer) {
+      localStorage.setItem('tobiiServer', this.state.tobiiServer);
+      this.startTobii();
+    }
+
+    if (this.state.mqtt.server) {
+      localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
+      this.startMqtt();
+    }
+
+    localStorage.setItem('rules', JSON.stringify(this.state.rules));
+
+    this.setState({ phase: 'INGAME', pauseUntil: Date.now() + 1000 });
+    this.nextImage(false);
   }
 
   render() {
     return (
       <div className="app">
-        <header>
-          <h5>Points: {this.state.points}</h5>
-          {this.state.imageFiles.length > 0 ? (
-            <button onClick={() => this.nextImage(true)}>Skip Image</button>
+        {this.state.phase === 'INGAME' ? (
+          <header>
+            <h5>
+              Points: {this.state.points}{' '}
+              {this.state.rules.allowSkipImage &&
+              this.state.imageFiles.length > 0 ? (
+                <button onClick={() => this.nextImage(true)}>Skip Image</button>
+              ) : (
+                ''
+              )}
+            </h5>
+          </header>
+        ) : (
+          ''
+        )}
+        <main>
+          <div className="flex">
+            {this.state.phase === 'WON' ? (
+              <h1>You won! Your score: {this.state.points}</h1>
+            ) : this.state.phase === 'INGAME' ? (
+              ''
+            ) : (
+              ''
+            )}
+            <img
+              id="renderPane"
+              ref={this.renderPane}
+              src={this.state.currentImageData}
+              onMouseMove={this.handleMouseMoveOnPane}
+            ></img>
+            {this.state.rules.showGaze ? (
+              <Cursor
+                size={200}
+                position={this.state.cursorPosition}
+                hint={this.state.cursorHint}
+              ></Cursor>
+            ) : (
+              ''
+            )}
+          </div>
+
+          {this.state.phase === 'SETUP' ? (
+            <details open>
+              <summary>Rules</summary>
+              <ul>
+                <li>
+                  Look into{' '}
+                  <select
+                    multiple={true}
+                    value={this.state.rules.focusRegions}
+                    onChange={(e) =>
+                      this.setState({
+                        rules: {
+                          ...this.state.rules,
+                          focusRegions: (Array.from(
+                            e.target.options
+                          ) as HTMLOptionElement[])
+                            .filter((i) => i.selected)
+                            .map((i) => i.value) as DetectionType[],
+                        },
+                      })
+                    }
+                  >
+                    <option value="FACE_FEMALE">female Face</option>
+                    <option value="FACE_MALE">male Face</option>
+                    <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
+                    <option value="FEET_COVERED">feet (covered)</option>
+                    <option value="FEET_EXPOSED">feet (exposed)</option>
+                    <option value="BELLY_EXPOSED">belly (exposed)</option>
+                    <option value="BELLY_COVERED">belly (covered)</option>
+                    <option value="ANUS_EXPOSED">anus (exposed)</option>
+                    <option value="ANUS_COVERED">anus (covered)</option>
+                    <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
+                    <option value="MALE_GENITALIA_EXPOSED">
+                      male genitalia (exposed)
+                    </option>
+                    <option value="MALE_GENITALIA_COVERED">
+                      male genitalia (covered)
+                    </option>
+                    <option value="MALE_BREAST_EXPOSED">
+                      male breast (exposed)
+                    </option>
+                    <option value="MALE_BREAST_COVERED">
+                      male breast (covered)
+                    </option>
+                    <option value="FEMALE_BREAST_EXPOSED">
+                      female breast (exposed)
+                    </option>
+                    <option value="FEMALE_BREAST_COVERED">
+                      female breast (covered)
+                    </option>
+                    <option value="FEMALE_GENITALIA_EXPOSED">
+                      female genitalia (exposed)
+                    </option>
+                    <option value="FEMALE_GENITALIA_COVERED">
+                      female genitalia (covered)
+                    </option>
+                  </select>{' '}
+                  for{' '}
+                  <input
+                    type="number"
+                    value={this.state.rules.focusDuration}
+                    min="1"
+                    max="20"
+                    onChange={(e) =>
+                      this.setState({
+                        rules: {
+                          ...this.state.rules,
+                          focusDuration: e.target.valueAsNumber,
+                        },
+                      })
+                    }
+                  ></input>{' '}
+                  seconds
+                </li>
+                <li>
+                  Do not stare at{' '}
+                  <select
+                    multiple={true}
+                    value={this.state.rules.softPunishRegions}
+                    onChange={(e) =>
+                      this.setState({
+                        rules: {
+                          ...this.state.rules,
+                          softPunishRegions: (Array.from(
+                            e.target.options
+                          ) as HTMLOptionElement[])
+                            .filter((i) => i.selected)
+                            .map((i) => i.value) as DetectionType[],
+                        },
+                      })
+                    }
+                  >
+                    <option value="FACE_FEMALE">female Face</option>
+                    <option value="FACE_MALE">male Face</option>
+                    <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
+                    <option value="FEET_COVERED">feet (covered)</option>
+                    <option value="FEET_EXPOSED">feet (exposed)</option>
+                    <option value="BELLY_EXPOSED">belly (exposed)</option>
+                    <option value="BELLY_COVERED">belly (covered)</option>
+                    <option value="ANUS_EXPOSED">anus (exposed)</option>
+                    <option value="ANUS_COVERED">anus (covered)</option>
+                    <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
+                    <option value="MALE_GENITALIA_EXPOSED">
+                      male genitalia (exposed)
+                    </option>
+                    <option value="MALE_GENITALIA_COVERED">
+                      male genitalia (covered)
+                    </option>
+                    <option value="MALE_BREAST_EXPOSED">
+                      male breast (exposed)
+                    </option>
+                    <option value="MALE_BREAST_COVERED">
+                      male breast (covered)
+                    </option>
+                    <option value="FEMALE_BREAST_EXPOSED">
+                      female breast (exposed)
+                    </option>
+                    <option value="FEMALE_BREAST_COVERED">
+                      female breast (covered)
+                    </option>
+                    <option value="FEMALE_GENITALIA_EXPOSED">
+                      female genitalia (exposed)
+                    </option>
+                    <option value="FEMALE_GENITALIA_COVERED">
+                      female genitalia (covered)
+                    </option>
+                  </select>{' '}
+                  !
+                </li>
+                <li>
+                  Especially do not stare at{' '}
+                  <select
+                    multiple={true}
+                    value={this.state.rules.hardPunishRegions}
+                    onChange={(e) =>
+                      this.setState({
+                        rules: {
+                          ...this.state.rules,
+                          hardPunishRegions: (Array.from(
+                            e.target.options
+                          ) as HTMLOptionElement[])
+                            .filter((i) => i.selected)
+                            .map((i) => i.value) as DetectionType[],
+                        },
+                      })
+                    }
+                  >
+                    <option value="FACE_FEMALE">female Face</option>
+                    <option value="FACE_MALE">male Face</option>
+                    <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
+                    <option value="FEET_COVERED">feet (covered)</option>
+                    <option value="FEET_EXPOSED">feet (exposed)</option>
+                    <option value="BELLY_EXPOSED">belly (exposed)</option>
+                    <option value="BELLY_COVERED">belly (covered)</option>
+                    <option value="ANUS_EXPOSED">anus (exposed)</option>
+                    <option value="ANUS_COVERED">anus (covered)</option>
+                    <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
+                    <option value="MALE_GENITALIA_EXPOSED">
+                      male genitalia (exposed)
+                    </option>
+                    <option value="MALE_GENITALIA_COVERED">
+                      male genitalia (covered)
+                    </option>
+                    <option value="MALE_BREAST_EXPOSED">
+                      male breast (exposed)
+                    </option>
+                    <option value="MALE_BREAST_COVERED">
+                      male breast (covered)
+                    </option>
+                    <option value="FEMALE_BREAST_EXPOSED">
+                      female breast (exposed)
+                    </option>
+                    <option value="FEMALE_BREAST_COVERED">
+                      female breast (covered)
+                    </option>
+                    <option value="FEMALE_GENITALIA_EXPOSED">
+                      female genitalia (exposed)
+                    </option>
+                    <option value="FEMALE_GENITALIA_COVERED">
+                      female genitalia (covered)
+                    </option>
+                  </select>{' '}
+                  !
+                </li>
+                <li>Not following these rules will be punished.</li>
+                <li>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={this.state.rules.showGaze}
+                      onChange={(e) =>
+                        this.setState({
+                          rules: {
+                            ...this.state.rules,
+                            showGaze: e.target.checked,
+                          },
+                        })
+                      }
+                    ></input>{' '}
+                    Gaze tracing
+                  </label>
+                </li>
+                <li>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={this.state.rules.allowSkipImage}
+                      onChange={(e) =>
+                        this.setState({
+                          rules: {
+                            ...this.state.rules,
+                            allowSkipImage: e.target.checked,
+                          },
+                        })
+                      }
+                    ></input>{' '}
+                    Allow skip image
+                  </label>
+                </li>
+              </ul>
+              <button onClick={(e) => this.setState({ rules: defaultRules })}>
+                Reset to defaults
+              </button>
+            </details>
           ) : (
             ''
           )}
-        </header>
-        <main>
-          <div className="flex">
-            {this.state.won ? (
-              <h1>You won! Your score: {this.state.points}</h1>
-            ) : ('')}
-             <img
-                id="renderPane"
-                ref={this.renderPane}
-                src={this.state.currentImageData}
-                onMouseMove={this.handleMouseMoveOnPane}
-              ></img>
-            <Cursor
-              size={200}
-              position={this.state.cursorPosition}
-              hint={this.state.cursorHint}
-            ></Cursor>
-          </div>
-          <details open>
-            <summary>Rules</summary>
-            <ul>
-              <li>Look into their eyes or faces!</li>
-              <li>Do not stare at private body parts!</li>
-              <li>Especially do not stare at naked private body parts!</li>
-              <li>Not following these rules will be punished.</li>
-            </ul>
-          </details>
-          <details open>
-            <summary>Select local gallery</summary>
-            <p>
-              This gallery uses the json metadata from the{' '}
-              <a href="https://pury.fi/" target="_blank">
-                pury.fi
-              </a>{' '}
-              NSFW model. To create a gallery, fetch the pury.fi offline tool{' '}
-              <a href="https://discord.com/channels/347085342119297027/504704914568773670/629019675623424010">
-                as described here
-              </a>
-              , start the detection for your images. Then select{' '}
-              <em>Save JSON-Metadata</em> and run <em>Save Images</em>. Now copy
-              all original images and all files from the <em>output/json</em>{' '}
-              folder into a single directory and select it here.
-            </p>
-            <input
-              ref={this.fileSelector}
-              type="file"
-              onChange={(e) => this.handleFileSelection(e)}
-            ></input>
-            <p>
-              Suggestions/PRs for a public domain sample gallery are welcome!
-            </p>
-          </details>
+
+          {this.state.phase === 'SETUP' ? (
+            <details open>
+              <summary>Select local gallery</summary>
+              <p>
+                This gallery uses the json metadata from the{' '}
+                <a href="https://pury.fi/" target="_blank">
+                  pury.fi
+                </a>{' '}
+                NSFW model. To create a gallery, fetch the pury.fi offline tool{' '}
+                <a href="https://discord.com/channels/347085342119297027/504704914568773670/629019675623424010">
+                  as described here
+                </a>
+                , start the detection for your images. Then select{' '}
+                <em>Save JSON-Metadata</em> and run <em>Save Images</em>. Now
+                copy all original images and all files from the{' '}
+                <em>output/json</em> folder into a single directory and select
+                it here.
+              </p>
+              <input
+                ref={this.fileSelector}
+                type="file"
+                onChange={(e) => this.handleFileSelection(e)}
+              ></input>
+              <p>
+                Suggestions/PRs for a public domain sample gallery are welcome!
+              </p>
+            </details>
+          ) : (
+            ''
+          )}
+
           <details>
             <summary>Configure MQTT</summary>
-            <form onSubmit={this.handleMqttSubmit} noValidate={true}>
-              <div className="form-group">
-                <label>
-                  MQTT Server
-                  <input type="text" name="mqttServer"></input>
-                </label>
-              </div>
-              <div className="form-group">
-                <label>
-                  Punishment Topic
-                  <input type="text" name="mqttPunishmentTopic"></input>
-                </label>
-              </div>
-              <div className="form-group">
-                <label>
-                  Punishment Payload
-                  <input type="text" name="mqttPunishmentPayload"></input>
-                </label>
-              </div>
-              <button>Save and connect (TBD)</button>
-            </form>
+            <div className="form-group">
+              <label>
+                MQTT Server
+                <input
+                  type="text"
+                  value={this.state.mqtt.server}
+                  onChange={(e) =>
+                    this.setState({
+                      mqtt: { ...this.state.mqtt, server: e.target.value },
+                    })
+                  }
+                ></input>
+              </label>
+            </div>
+
+            <div className="form-group">
+              <label>
+                Auth?
+                <input
+                  type="checkbox"
+                  checked={this.state.mqtt.auth}
+                  onChange={(e) =>
+                    this.setState({
+                      mqtt: { ...this.state.mqtt, auth: e.target.checked },
+                    })
+                  }
+                ></input>
+              </label>
+              {this.state.mqtt.auth ? (
+                <div>
+                  <label>
+                    Username
+                    <input
+                      type="text"
+                      value={this.state.mqtt.username}
+                      onChange={(e) =>
+                        this.setState({
+                          mqtt: {
+                            ...this.state.mqtt,
+                            username: e.target.value,
+                          },
+                        })
+                      }
+                    ></input>
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      type="password"
+                      value={this.state.mqtt.password}
+                      onChange={(e) =>
+                        this.setState({
+                          mqtt: {
+                            ...this.state.mqtt,
+                            password: e.target.value,
+                          },
+                        })
+                      }
+                    ></input>
+                  </label>
+                </div>
+              ) : (
+                ''
+              )}
+            </div>
+
+            <div className="form-group">
+              <legend>Punishment</legend>
+              <label>
+                Topic
+                <input
+                  type="text"
+                  value={this.state.mqtt.topics.punishTopic?.name}
+                  onChange={(e) =>
+                    this.setState({
+                      mqtt: {
+                        ...this.state.mqtt,
+                        topics: {
+                          ...this.state.mqtt.topics,
+                          punishTopic: {
+                            ...(this.state.mqtt.topics.punishTopic || {
+                              name: '',
+                              message: '',
+                            }),
+                            name: e.target.value,
+                          },
+                        },
+                      },
+                    })
+                  }
+                ></input>
+              </label>
+              <label>
+                Message
+                <input
+                  type="text"
+                  value={this.state.mqtt.topics.punishTopic?.message}
+                ></input>
+              </label>
+            </div>
           </details>
           <details>
             <summary>Tobii EyeX</summary>
@@ -448,18 +858,24 @@ export class MainComponent extends Component<Props, State> {
               . As a preparation, install your Tobii Tracking software and
               launch the <em>TobiiSocketServer.exe</em>.
             </p>
-            <form onSubmit={this.handleMqttSubmit} noValidate={true}>
-              <div className="form-group">
-                <label>
-                  Tobii Websocket Server
-                  <input type="text" name="mqttServer"></input>
-                </label>
-              </div>
-            </form>
+            <div className="form-group">
+              <label>
+                Tobii Websocket Server
+                <input
+                  type="text"
+                  value={this.state.tobiiServer}
+                  onChange={(e) => {
+                    this.setState({ tobiiServer: e.target.value });
+                  }}
+                ></input>
+              </label>
+            </div>
           </details>
-          <details>
-            <summary>Run affected commands</summary>
-          </details>
+          {this.state.imageFiles.length > 0 && this.state.phase === 'SETUP' ? (
+            <button onClick={() => this.startGame()}>Start here!</button>
+          ) : (
+            ''
+          )}
         </main>
       </div>
     );

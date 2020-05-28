@@ -27,8 +27,9 @@
   },
   "private": true,
   "dependencies": {
+    "buffer": "^5.6.0",
     "document-register-element": "1.13.1",
-    "mqtt": "^4.1.0",
+    "mqtt": "^4.0.0",
     "react": "16.12.0",
     "react-dom": "16.12.0",
     "rxjs": "^6.5.5"

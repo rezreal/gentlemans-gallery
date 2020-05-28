@@ -20,10 +20,11 @@
 #renderPane {
   transition: transform 0.2s ease-out; /* Animation */
   border-radius: 0px;
+  z-index: 998;
 }
 
 #renderPane.fadeout{
-  transition: transform 4.5s ease-in;
+  transition: transform 5s ease-in;
   transform: scale(2);
 }
 
