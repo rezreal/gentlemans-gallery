@@ -28,9 +28,13 @@
   transform: scale(2);
 }
 
-#renderPane.softfocus{
+#renderPane.softfocus.saturate {
   transition: filter 0.1s;
   filter: saturate(200%);
+}
+
+#renderPane.softfocus.pixelate {
+  filter: url('#pixelate');
 }
 
 #renderPane.hardfocus{

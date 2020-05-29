@@ -13,6 +13,12 @@ import {
 } from 'rxjs/operators';
 import { Cursor } from './Cursor';
 import './MainComponent.css';
+import {
+  ButtplugClient,
+  ButtplugClientDevice,
+  ButtplugDeviceMessage,
+  ButtplugBrowserWebsocketClientConnector,
+} from 'buttplug';
 
 import * as buffer from 'buffer';
 
@@ -34,10 +40,13 @@ interface Rules {
   hardPunishRegions: DetectionType[];
   showGaze: boolean;
   allowSkipImage: boolean;
+  softFilter: 'pixelate' | 'saturate';
+  playSounds: boolean;
 }
 
 interface State {
   mqtt: {
+    use: boolean;
     server?: string;
     clientId?: string;
     auth: boolean;
@@ -50,8 +59,15 @@ interface State {
       unlockRestraint?: TopicWithMessage;
     };
   };
+  buttplug: {
+    use: boolean;
+    server: string;
+  };
+  tobii: {
+    use: boolean;
+    server?: string;
+  };
   rules: Rules;
-  tobiiServer?: string;
   imageFiles: File[];
   jsonFiles: { [_: string]: PurifyMetadata };
   currentImage?: number;
@@ -81,13 +97,20 @@ const defaultRules: Rules = {
   ],
   showGaze: true,
   allowSkipImage: true,
+  softFilter: 'saturate',
+  playSounds: true,
 };
 
 export class MainComponent extends Component<Props, State> {
   constructor(props) {
     super(props);
     this.state = {
+      buttplug: {
+        use: false,
+        server: 'wss://localhost',
+      },
       mqtt: {
+        use: false,
         server: 'mqtts:://test.mosquitto.org:8081',
         topics: {},
         auth: false,
@@ -97,7 +120,10 @@ export class MainComponent extends Component<Props, State> {
         ...defaultRules,
         ...JSON.parse(localStorage.getItem('rules') || '{}'),
       },
-      tobiiServer: 'ws://localhost:8887',
+      tobii: {
+        use: true,
+        server: 'ws://localhost:8887',
+      },
       imageFiles: [],
       jsonFiles: {},
       cursorPosition: { x: 0, y: 0 },
@@ -110,6 +136,8 @@ export class MainComponent extends Component<Props, State> {
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
     this.renderPane = React.createRef();
     this.fileSelector = React.createRef();
+    this.audioDing = React.createRef();
+    this.audioError = React.createRef();
   }
 
   gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject(
@@ -121,7 +149,10 @@ export class MainComponent extends Component<Props, State> {
   tobiiWs: WebSocket | undefined;
 
   private startTobii(): void {
-    const ws = new WebSocket(this.state.tobiiServer, ['Tobii.Interaction']);
+    if (!this.state.tobii.use) {
+      return;
+    }
+    const ws = new WebSocket(this.state.tobii.server, ['Tobii.Interaction']);
 
     ws.onmessage = (m) => {
       const parsed = JSON.parse(m.data) as ProtocolFrame;
@@ -148,6 +179,19 @@ export class MainComponent extends Component<Props, State> {
       ws.send('startEyePosition');
     };
     this.tobiiWs = ws;
+  }
+
+  startButtplug() {
+    const client = new ButtplugClient('Gentlemans Library');
+    client.addListener('disconnect', this.buttplugDisconnected);
+
+    client.Connect(
+      new ButtplugBrowserWebsocketClientConnector(this.state.buttplug.server)
+    );
+  }
+
+  buttplugDisconnected() {
+    // todo: reconnect
   }
 
   startMqtt() {
@@ -196,7 +240,7 @@ export class MainComponent extends Component<Props, State> {
         }),
         switchMap((zone) =>
           of(zone).pipe(
-            delay(zone === 'NEXT' ? this.state.rules.focusDuration * 1000 : 250)
+            delay(zone === 'NEXT' ? this.state.rules.focusDuration * 1000 : 200)
           )
         ),
         tap((zone) => {
@@ -210,6 +254,10 @@ export class MainComponent extends Component<Props, State> {
       .subscribe((zone) => {
         switch (zone) {
           case 'NEXT':
+            if (this.state.rules.playSounds) {
+              this.audioDing.current.play();
+            }
+
             this.nextImage(false);
             break;
           case undefined:
@@ -231,6 +279,8 @@ export class MainComponent extends Component<Props, State> {
 
   private readonly renderPane: RefObject<HTMLImageElement>;
   private readonly fileSelector: RefObject<HTMLInputElement>;
+  private readonly audioDing: RefObject<HTMLAudioElement>;
+  private readonly audioError: RefObject<HTMLAudioElement>;
 
   private static arrayBufferToJsonObject(data: ArrayBuffer): unknown {
     var dataView = new DataView(data);
@@ -260,6 +310,9 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private punish(level: 'SOFT' | 'HARD') {
+    if (this.state.rules.playSounds) {
+      this.audioError.current.play();
+    }
     if (level === 'HARD') {
       this.setState({
         points: this.state.points - 10,
@@ -377,11 +430,53 @@ export class MainComponent extends Component<Props, State> {
     );
   }
 
+  private loadDemoImages() {
+    Promise.all([
+      fetch('assets/demo/woman.jpg')
+        .then((r) => r.blob())
+        .then((blob) => new File([blob], 'woman.jpg', {})),
+      fetch('assets/demo/man.jpg')
+        .then((r) => r.blob())
+        .then((blob) => new File([blob], 'man.jpg', {})),
+    ]).then((files) =>
+      this.setState({
+        imageFiles: files,
+        jsonFiles: {
+          'man.jpg': {
+            output: { nsfw_score: 1, detections: [] },
+            file: 'man.jpg',
+          },
+          'woman.jpg': {
+            output: {
+              nsfw_score: 1,
+              detections: [
+                {
+                  bounding_box: [
+                    288.84649658203125,
+                    546.881103515625,
+                    368.3436584472656,
+                    625.3768310546875,
+                  ],
+                  confidence: 1.0,
+                  name: 'FACE_FEMALE',
+                },
+              ],
+            },
+            file: 'woman.jpg',
+          },
+        },
+      })
+    );
+  }
+
   private handleFileSelection(e: ChangeEvent<HTMLInputElement>) {
     const nativeFiles: FileList = e.target.files;
     const allFiles = Array.from(nativeFiles);
     const imageFiles: File[] = allFiles.filter(
-      (f) => f.type === 'image/jpeg' || f.type === 'image/png'
+      (f) =>
+        f.type === 'image/jpeg' ||
+        f.type === 'image/png' ||
+        f.type === 'image/webp'
     );
     // sort them by name
     imageFiles.sort((a, b) => a.name.localeCompare(b.name));
@@ -421,14 +516,19 @@ export class MainComponent extends Component<Props, State> {
   }
 
   startGame(): void {
-    if (this.state.tobiiServer) {
-      localStorage.setItem('tobiiServer', this.state.tobiiServer);
+    if (this.state.tobii.use) {
+      localStorage.setItem('tobiiServer', this.state.tobii.server);
       this.startTobii();
     }
 
     if (this.state.mqtt.server) {
       localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
       this.startMqtt();
+    }
+
+    localStorage.setItem('buttplug', JSON.stringify(this.state.buttplug));
+    if (this.state.buttplug.use) {
+      this.startButtplug();
     }
 
     localStorage.setItem('rules', JSON.stringify(this.state.rules));
@@ -469,7 +569,34 @@ export class MainComponent extends Component<Props, State> {
               ref={this.renderPane}
               src={this.state.currentImageData}
               onMouseMove={this.handleMouseMoveOnPane}
+              className={this.state.rules.softFilter}
             ></img>
+            <svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="0">
+              <defs>
+                <filter id="pixelate" x="0" y="0">
+                  <feFlood x="8" y="8" height="4" width="4" />
+
+                  <feComposite width="20" height="20" />
+
+                  <feTile result="a" />
+
+                  <feComposite in="SourceGraphic" in2="a" operator="in" />
+
+                  <feMorphology operator="dilate" radius="10" />
+                </filter>
+              </defs>
+            </svg>
+            <audio
+              src="assets/ding.mp3"
+              ref={this.audioDing}
+              autoPlay={false}
+            ></audio>
+            <audio
+              src="assets/beep-03.mp3"
+              ref={this.audioError}
+              autoPlay={false}
+            ></audio>
+
             {this.state.rules.showGaze ? (
               <Cursor
                 size={200}
@@ -700,6 +827,43 @@ export class MainComponent extends Component<Props, State> {
                     Allow skip image
                   </label>
                 </li>
+                <li>
+                  <label>
+                    Visual Warning{' '}
+                    <select
+                      value={this.state.rules.softFilter}
+                      onChange={(e) =>
+                        this.setState({
+                          rules: {
+                            ...this.state.rules,
+                            softFilter: e.target.value as any,
+                          },
+                        })
+                      }
+                    >
+                      {' '}
+                      <option value="saturate">Saturate</option>
+                      <option value="pixelate">Pixelate</option>
+                    </select>
+                  </label>
+                </li>
+                <li>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={this.state.rules.playSounds}
+                      onChange={(e) =>
+                        this.setState({
+                          rules: {
+                            ...this.state.rules,
+                            playSounds: e.target.checked,
+                          },
+                        })
+                      }
+                    ></input>{' '}
+                    Play Sounds
+                  </label>
+                </li>
               </ul>
               <button onClick={(e) => this.setState({ rules: defaultRules })}>
                 Reset to defaults
@@ -734,6 +898,9 @@ export class MainComponent extends Component<Props, State> {
               ></input>
               <p>
                 Suggestions/PRs for a public domain sample gallery are welcome!
+                <button onClick={()=>this.loadDemoImages()}>
+                  Load demo images
+                </button>
               </p>
             </details>
           ) : (
@@ -744,105 +911,171 @@ export class MainComponent extends Component<Props, State> {
             <summary>Configure MQTT</summary>
             <div className="form-group">
               <label>
-                MQTT Server
+                Use MQTT?
                 <input
-                  type="text"
-                  value={this.state.mqtt.server}
+                  type="checkbox"
+                  checked={this.state.mqtt.use}
                   onChange={(e) =>
                     this.setState({
-                      mqtt: { ...this.state.mqtt, server: e.target.value },
+                      mqtt: { ...this.state.mqtt, use: e.target.checked },
                     })
                   }
                 ></input>
               </label>
             </div>
-
-            <div className="form-group">
-              <label>
-                Auth?
-                <input
-                  type="checkbox"
-                  checked={this.state.mqtt.auth}
-                  onChange={(e) =>
-                    this.setState({
-                      mqtt: { ...this.state.mqtt, auth: e.target.checked },
-                    })
-                  }
-                ></input>
-              </label>
-              {this.state.mqtt.auth ? (
-                <div>
+            {this.state.mqtt.use ? (
+              <div>
+                <div className="form-group">
                   <label>
-                    Username
+                    MQTT Server
                     <input
                       type="text"
-                      value={this.state.mqtt.username}
+                      value={this.state.mqtt.server}
                       onChange={(e) =>
                         this.setState({
-                          mqtt: {
-                            ...this.state.mqtt,
-                            username: e.target.value,
-                          },
-                        })
-                      }
-                    ></input>
-                  </label>
-                  <label>
-                    Password
-                    <input
-                      type="password"
-                      value={this.state.mqtt.password}
-                      onChange={(e) =>
-                        this.setState({
-                          mqtt: {
-                            ...this.state.mqtt,
-                            password: e.target.value,
-                          },
+                          mqtt: { ...this.state.mqtt, server: e.target.value },
                         })
                       }
                     ></input>
                   </label>
                 </div>
-              ) : (
-                ''
-              )}
-            </div>
 
+                <div className="form-group">
+                  <label>
+                    Auth?
+                    <input
+                      type="checkbox"
+                      checked={this.state.mqtt.auth}
+                      onChange={(e) =>
+                        this.setState({
+                          mqtt: { ...this.state.mqtt, auth: e.target.checked },
+                        })
+                      }
+                    ></input>
+                  </label>
+                  {this.state.mqtt.auth ? (
+                    <div>
+                      <label>
+                        Username
+                        <input
+                          type="text"
+                          value={this.state.mqtt.username}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                username: e.target.value,
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                      <label>
+                        Password
+                        <input
+                          type="password"
+                          value={this.state.mqtt.password}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                password: e.target.value,
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </div>
+                  ) : (
+                    ''
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <legend>Punishment</legend>
+                  <label>
+                    Topic
+                    <input
+                      type="text"
+                      value={this.state.mqtt.topics.punishTopic?.name}
+                      onChange={(e) =>
+                        this.setState({
+                          mqtt: {
+                            ...this.state.mqtt,
+                            topics: {
+                              ...this.state.mqtt.topics,
+                              punishTopic: {
+                                ...(this.state.mqtt.topics.punishTopic || {
+                                  name: '',
+                                  message: '',
+                                }),
+                                name: e.target.value,
+                              },
+                            },
+                          },
+                        })
+                      }
+                    ></input>
+                  </label>
+                  <label>
+                    Message
+                    <input
+                      type="text"
+                      value={this.state.mqtt.topics.punishTopic?.message}
+                    ></input>
+                  </label>
+                </div>
+              </div>
+            ) : (
+              ''
+            )}
+          </details>
+
+          <details>
+            <summary>Buttplug.io</summary>
+            <p>
+              You can pair this gallery with buttplug.io to control your toys.
+            </p>
             <div className="form-group">
-              <legend>Punishment</legend>
               <label>
-                Topic
+                Use Buttplug?
                 <input
-                  type="text"
-                  value={this.state.mqtt.topics.punishTopic?.name}
+                  type="checkbox"
+                  checked={this.state.buttplug.use}
                   onChange={(e) =>
                     this.setState({
-                      mqtt: {
-                        ...this.state.mqtt,
-                        topics: {
-                          ...this.state.mqtt.topics,
-                          punishTopic: {
-                            ...(this.state.mqtt.topics.punishTopic || {
-                              name: '',
-                              message: '',
-                            }),
-                            name: e.target.value,
-                          },
-                        },
+                      buttplug: {
+                        ...this.state.buttplug,
+                        use: e.target.checked,
                       },
                     })
                   }
                 ></input>
               </label>
-              <label>
-                Message
-                <input
-                  type="text"
-                  value={this.state.mqtt.topics.punishTopic?.message}
-                ></input>
-              </label>
             </div>
+            {this.state.buttplug.use ? (
+              <div className="form-group">
+                <label>
+                  Buttplug server
+                  <input
+                    type="text"
+                    value={this.state.buttplug.server}
+                    onChange={(e) => {
+                      this.setState({
+                        tobii: {
+                          ...this.state.buttplug,
+                          server: e.target.value,
+                        },
+                      });
+                    }}
+                  ></input>
+                </label>
+              </div>
+            ) : (
+              ''
+            )}
           </details>
+
           <details>
             <summary>Tobii EyeX</summary>
             <p>
@@ -860,17 +1093,35 @@ export class MainComponent extends Component<Props, State> {
             </p>
             <div className="form-group">
               <label>
+                Use Tobii?
+                <input
+                  type="checkbox"
+                  checked={this.state.tobii.use}
+                  onChange={(e) =>
+                    this.setState({
+                      tobii: { ...this.state.tobii, use: e.target.checked },
+                    })
+                  }
+                ></input>
+              </label>
+            </div>
+
+            <div className="form-group">
+              <label>
                 Tobii Websocket Server
                 <input
                   type="text"
-                  value={this.state.tobiiServer}
+                  value={this.state.tobii.server}
                   onChange={(e) => {
-                    this.setState({ tobiiServer: e.target.value });
+                    this.setState({
+                      tobii: { ...this.state.tobii, server: e.target.value },
+                    });
                   }}
                 ></input>
               </label>
             </div>
           </details>
+
           {this.state.imageFiles.length > 0 && this.state.phase === 'SETUP' ? (
             <button onClick={() => this.startGame()}>Start here!</button>
           ) : (
