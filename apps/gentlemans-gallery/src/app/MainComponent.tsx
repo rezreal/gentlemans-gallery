@@ -20,7 +20,8 @@ import {
   ButtplugBrowserWebsocketClientConnector,
 } from 'buttplug';
 
-import { connect } from './browserMqtt';
+//import { connect } from './browserMqtt';
+import { connect, MqttClient } from 'mqtt';
 
 interface Props {}
 
@@ -149,7 +150,7 @@ export class MainComponent extends Component<Props, State> {
   tobiiScreenWidth: number = window.screen.width;
   tobiiScreenHeight: number = window.screen.height;
 
-  mqttClient: any | undefined;
+  mqttClient: MqttClient | undefined;
 
   private startTobii(): void {
     if (!this.state.tobii.use) {
