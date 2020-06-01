@@ -20,17 +20,14 @@ import {
   ButtplugBrowserWebsocketClientConnector,
 } from 'buttplug';
 
-import * as buffer from 'buffer';
-
-(window as any).Buffer = buffer;
-
-import { connect, MqttClient } from 'mqtt';
+import { connect } from './browserMqtt';
 
 interface Props {}
 
 type TopicWithMessage = {
   name: string;
   message: string;
+  stopMessage?: string;
 };
 
 interface Rules {
@@ -65,6 +62,7 @@ interface State {
   };
   tobii: {
     use: boolean;
+    disableMouse: boolean;
     server?: string;
   };
   rules: Rules;
@@ -111,7 +109,7 @@ export class MainComponent extends Component<Props, State> {
       },
       mqtt: {
         use: false,
-        server: 'mqtts:://test.mosquitto.org:8081',
+        server: 'wss://test.mosquitto.org:8081',
         topics: {},
         auth: false,
         ...JSON.parse(localStorage.getItem('mqtt') || '{}'),
@@ -122,6 +120,7 @@ export class MainComponent extends Component<Props, State> {
       },
       tobii: {
         use: true,
+        disableMouse: false,
         server: 'ws://localhost:8887',
       },
       imageFiles: [],
@@ -147,6 +146,10 @@ export class MainComponent extends Component<Props, State> {
   destroy$: Subject<unknown> = new Subject<unknown>();
 
   tobiiWs: WebSocket | undefined;
+  tobiiScreenWidth: number = window.screen.width;
+  tobiiScreenHeight: number = window.screen.height;
+
+  mqttClient: any | undefined;
 
   private startTobii(): void {
     if (!this.state.tobii.use) {
@@ -156,14 +159,22 @@ export class MainComponent extends Component<Props, State> {
 
     ws.onmessage = (m) => {
       const parsed = JSON.parse(m.data) as ProtocolFrame;
-      if (parsed.type === 'gazePoint') {
+      if (parsed.type === 'state') {
+        this.tobiiScreenWidth = parsed.data.screenBounds.Width;
+        this.tobiiScreenHeight = parsed.data.screenBounds.Height;
+      } else if (parsed.type === 'gazePoint') {
         const gaze = parsed.data;
         const cutHeight = window.outerHeight - window.innerHeight;
         const cutWidth = window.outerWidth - window.innerWidth;
-
         const clientPoint = {
-          x: gaze.X - window.screenX - cutWidth,
-          y: gaze.Y - window.screenY - cutHeight,
+          x:
+            (gaze.X * window.screen.width) / this.tobiiScreenWidth -
+            window.screenX -
+            cutWidth,
+          y:
+            (gaze.Y * window.screen.height) / this.tobiiScreenHeight -
+            window.screenY -
+            cutHeight,
         };
 
         this.moveToClient(clientPoint);
@@ -175,8 +186,9 @@ export class MainComponent extends Component<Props, State> {
       }
     };
     ws.onopen = () => {
+      ws.send('state');
       ws.send('startGazePoint');
-      ws.send('startEyePosition');
+      //ws.send('startEyePosition');
     };
     this.tobiiWs = ws;
   }
@@ -194,16 +206,56 @@ export class MainComponent extends Component<Props, State> {
     // todo: reconnect
   }
 
+  sendMqtt(topic: string, message: string, qos?: 0 | 1 | 2) {
+    if (this.mqttClient && this.mqttClient.connected) {
+      this.mqttClient.publish(topic, message, { qos: qos ?? 0 });
+    }
+  }
+
   startMqtt() {
-    /*
-    const client: MqttClient = connect(`${this.state.mqtt.server}`, {
-      username: this.state.mqtt.username,
-      password: this.state.mqtt.password,
+    if (this.mqttClient) {
+      this.mqttClient.end(true);
+      this.mqttClient = undefined;
+    }
+    this.mqttClient = connect(this.state.mqtt.server, {
+      protocol: 'ws',
+      username: this.state.mqtt.auth ? this.state.mqtt.username : undefined,
+      password: this.state.mqtt.auth ? this.state.mqtt.password : undefined,
+      clean: true,
+      clientId: 'gentlemans-gallery_' + Math.random().toString(16).substr(2, 8),
+      will: {
+        topic: 'gentlemans-gallery/$state',
+        payload: 'lost',
+        retain: true,
+        qos: 1,
+      },
     });
 
-    client.on('connect', (c) => {
+    this.mqttClient.on('connect', () => {
       console.info(`connected to ${this.state.mqtt.server}`);
-    });*/
+      this.mqttClient.publish('gentlemans-gallery/$state', 'ready', {
+        qos: 1,
+        retain: true,
+      });
+    });
+    this.mqttClient.on('message', (topic, payload) => {
+      this.onCommandFromMqtt(topic);
+    });
+
+    this.mqttClient.on('error', (c) => {
+      console.error(`mqtt error:`, c);
+    });
+
+    this.mqttClient.on('packetsend', (sent) => {
+      console.info('mqtt packet sent: ', sent);
+    });
+    this.mqttClient.on('packetreceive', (sent) => {
+      console.info('mqtt packet received: ', sent);
+    });
+  }
+
+  onCommandFromMqtt(cmd: string): void {
+    console.info('cmd from mqtt: ', cmd);
   }
 
   componentDidMount(): void {
@@ -227,6 +279,20 @@ export class MainComponent extends Component<Props, State> {
           if (zone === 'NEXT') {
             void this.renderPane.current.offsetWidth;
             this.renderPane.current.classList.add('fadeout');
+            if (this.state.mqtt.topics.teaseTopic) {
+              this.sendMqtt(
+                this.state.mqtt.topics.teaseTopic.name,
+                this.state.mqtt.topics.teaseTopic.message
+              );
+            }
+          } else if (zone === undefined) {
+            if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
+              this.sendMqtt(
+                this.state.mqtt.topics.teaseTopic.name,
+                this.state.mqtt.topics.teaseTopic.stopMessage,
+                1
+              );
+            }
           }
           if (zone === 'HARD') {
             void this.renderPane.current.offsetWidth;
@@ -257,6 +323,12 @@ export class MainComponent extends Component<Props, State> {
             if (this.state.rules.playSounds) {
               this.audioDing.current.play();
             }
+            if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
+              this.sendMqtt(
+                this.state.mqtt.topics.teaseTopic.name,
+                this.state.mqtt.topics.teaseTopic?.stopMessage
+              );
+            }
 
             this.nextImage(false);
             break;
@@ -265,7 +337,7 @@ export class MainComponent extends Component<Props, State> {
           default:
             this.punish(zone);
         }
-        this.gazeHits$.next(undefined);
+
       });
   }
 
@@ -310,6 +382,12 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private punish(level: 'SOFT' | 'HARD') {
+    if (this.state.mqtt.topics.punishTopic) {
+      this.sendMqtt(
+        this.state.mqtt.topics.punishTopic.name,
+        this.state.mqtt.topics.punishTopic.message
+      );
+    }
     if (this.state.rules.playSounds) {
       this.audioError.current.play();
     }
@@ -358,6 +436,10 @@ export class MainComponent extends Component<Props, State> {
   private handleMqttSubmit() {}
 
   private handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
+    if (this.state.tobii.disableMouse) {
+      return;
+    }
+
     const nativeCoords = {
       x: evt.nativeEvent.clientX,
       y: evt.nativeEvent.clientY,
@@ -521,7 +603,7 @@ export class MainComponent extends Component<Props, State> {
       this.startTobii();
     }
 
-    if (this.state.mqtt.server) {
+    if (this.state.mqtt.use) {
       localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
       this.startMqtt();
     }
@@ -898,7 +980,7 @@ export class MainComponent extends Component<Props, State> {
               ></input>
               <p>
                 Suggestions/PRs for a public domain sample gallery are welcome!
-                <button onClick={()=>this.loadDemoImages()}>
+                <button onClick={() => this.loadDemoImages()}>
                   Load demo images
                 </button>
               </p>
@@ -992,38 +1074,160 @@ export class MainComponent extends Component<Props, State> {
                 </div>
 
                 <div className="form-group">
-                  <legend>Punishment</legend>
-                  <label>
-                    Topic
-                    <input
-                      type="text"
-                      value={this.state.mqtt.topics.punishTopic?.name}
-                      onChange={(e) =>
-                        this.setState({
-                          mqtt: {
-                            ...this.state.mqtt,
-                            topics: {
-                              ...this.state.mqtt.topics,
-                              punishTopic: {
-                                ...(this.state.mqtt.topics.punishTopic || {
-                                  name: '',
-                                  message: '',
-                                }),
-                                name: e.target.value,
+                  <legend>Tease</legend>
+                  <ul>
+                    <li>
+                      <label>
+                        Topic
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.teaseTopic?.name}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  teaseTopic: {
+                                    ...(this.state.mqtt.topics.teaseTopic || {
+                                      name: '',
+                                      message: '',
+                                    }),
+                                    name: e.target.value,
+                                  },
+                                },
                               },
-                            },
-                          },
-                        })
-                      }
-                    ></input>
-                  </label>
-                  <label>
-                    Message
-                    <input
-                      type="text"
-                      value={this.state.mqtt.topics.punishTopic?.message}
-                    ></input>
-                  </label>
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Message
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.teaseTopic?.message}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  teaseTopic: {
+                                    ...this.state.mqtt.topics.teaseTopic,
+                                    message: e.target.value,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Stop Message (optional)
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.teaseTopic?.stopMessage}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  teaseTopic: {
+                                    ...this.state.mqtt.topics.teaseTopic,
+                                    stopMessage: e.target.value?.trim(),
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                  </ul>
+                </div>
+                <div className="form-group">
+                  <legend>Punishment</legend>
+                  <ul>
+                    <li>
+                      <label>
+                        Topic
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.punishTopic?.name}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  punishTopic: {
+                                    ...(this.state.mqtt.topics.punishTopic || {
+                                      name: '',
+                                      message: '',
+                                    }),
+                                    name: e.target.value,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Message
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.punishTopic?.message}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  punishTopic: {
+                                    ...this.state.mqtt.topics.punishTopic,
+                                    message: e.target.value,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Stop Message (optional)
+                        <input
+                          type="text"
+                          value={
+                            this.state.mqtt.topics.punishTopic?.stopMessage
+                          }
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  punishTopic: {
+                                    ...this.state.mqtt.topics.punishTopic,
+                                    stopMessage: e.target.value?.trim(),
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                  </ul>
                 </div>
               </div>
             ) : (
@@ -1062,7 +1266,7 @@ export class MainComponent extends Component<Props, State> {
                     value={this.state.buttplug.server}
                     onChange={(e) => {
                       this.setState({
-                        tobii: {
+                        buttplug: {
                           ...this.state.buttplug,
                           server: e.target.value,
                         },
@@ -1105,21 +1309,45 @@ export class MainComponent extends Component<Props, State> {
                 ></input>
               </label>
             </div>
-
-            <div className="form-group">
-              <label>
-                Tobii Websocket Server
-                <input
-                  type="text"
-                  value={this.state.tobii.server}
-                  onChange={(e) => {
-                    this.setState({
-                      tobii: { ...this.state.tobii, server: e.target.value },
-                    });
-                  }}
-                ></input>
-              </label>
-            </div>
+            {this.state.tobii.use ? (
+              <div className="form-group">
+                <label>
+                  Disable mouse?
+                  <input
+                    type="checkbox"
+                    checked={this.state.tobii.disableMouse}
+                    onChange={(e) =>
+                      this.setState({
+                        tobii: {
+                          ...this.state.tobii,
+                          disableMouse: e.target.checked,
+                        },
+                      })
+                    }
+                  ></input>
+                </label>
+              </div>
+            ) : (
+              ''
+            )}
+            {this.state.tobii.use ? (
+              <div className="form-group">
+                <label>
+                  Tobii Websocket Server
+                  <input
+                    type="text"
+                    value={this.state.tobii.server}
+                    onChange={(e) => {
+                      this.setState({
+                        tobii: { ...this.state.tobii, server: e.target.value },
+                      });
+                    }}
+                  ></input>
+                </label>
+              </div>
+            ) : (
+              ''
+            )}
           </details>
 
           {this.state.imageFiles.length > 0 && this.state.phase === 'SETUP' ? (

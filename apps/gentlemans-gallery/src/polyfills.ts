@@ -5,3 +5,15 @@
  */
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
+
+import * as buffer from 'buffer';
+import * as process from 'process';
+
+(window as any).Buffer = buffer.SlowBuffer;
+
+(window as any).process = process;
+window.global.process = process
+
+process.on('unhandledRejection', (reason, promise) => console.log('unhandled', reason, promise));
+process.on('rejectionHandled', (promise) => console.log('handled', promise));
+
