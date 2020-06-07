@@ -144,6 +144,7 @@ export class MainComponent extends Component<Props, State> {
     undefined
   );
   eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject(false);
+  presence$: BehaviorSubject<boolean> = new BehaviorSubject(false);
   destroy$: Subject<unknown> = new Subject<unknown>();
 
   tobiiWs: WebSocket | undefined;
@@ -163,6 +164,10 @@ export class MainComponent extends Component<Props, State> {
       if (parsed.type === 'state') {
         this.tobiiScreenWidth = parsed.data.screenBounds.Width;
         this.tobiiScreenHeight = parsed.data.screenBounds.Height;
+        if (parsed.data.userPresence !== 'Unknown') {
+          this.presence$.next(parsed.data.userPresence === 'Present');
+        }
+
       } else if (parsed.type === 'gazePoint') {
         const gaze = parsed.data;
         const cutHeight = window.outerHeight - window.innerHeight;
@@ -362,7 +367,12 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private static extractImageFilename(path: String): string {
-    return path.substring(path.lastIndexOf('\\') + 1);
+    if (path.startsWith('/')) {
+      return path.substring(path.lastIndexOf('/') + 1);
+    } else {
+      // assuming a windows path separator
+      return path.substring(path.lastIndexOf('\\') + 1);
+    }
   }
 
   private detectionToZone(
