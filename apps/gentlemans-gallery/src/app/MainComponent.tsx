@@ -40,6 +40,8 @@ interface Rules {
   allowSkipImage: boolean;
   softFilter: 'pixelate' | 'saturate';
   playSounds: boolean;
+  fullscreen: boolean;
+  shuffleGallery: boolean;
 }
 
 interface State {
@@ -98,6 +100,8 @@ const defaultRules: Rules = {
   allowSkipImage: true,
   softFilter: 'saturate',
   playSounds: true,
+  fullscreen: false,
+  shuffleGallery: false,
 };
 
 export class MainComponent extends Component<Props, State> {
@@ -167,7 +171,6 @@ export class MainComponent extends Component<Props, State> {
         if (parsed.data.userPresence !== 'Unknown') {
           this.presence$.next(parsed.data.userPresence === 'Present');
         }
-
       } else if (parsed.type === 'gazePoint') {
         const gaze = parsed.data;
         const cutHeight = window.outerHeight - window.innerHeight;
@@ -224,7 +227,6 @@ export class MainComponent extends Component<Props, State> {
       this.mqttClient = undefined;
     }
     this.mqttClient = connect(this.state.mqtt.server, {
-      protocol: 'ws',
       username: this.state.mqtt.auth ? this.state.mqtt.username : undefined,
       password: this.state.mqtt.auth ? this.state.mqtt.password : undefined,
       clean: true,
@@ -343,7 +345,6 @@ export class MainComponent extends Component<Props, State> {
           default:
             this.punish(zone);
         }
-
       });
   }
 
@@ -427,6 +428,7 @@ export class MainComponent extends Component<Props, State> {
 
     if (nextIndex >= this.state.imageFiles.length) {
       this.setState({ phase: 'WON' });
+      document.exitFullscreen();
       return;
     }
 
@@ -609,6 +611,19 @@ export class MainComponent extends Component<Props, State> {
   }
 
   startGame(): void {
+    if (this.state.rules.fullscreen) {
+      document.body.requestFullscreen();
+    }
+
+    if (this.state.rules.shuffleGallery) {
+      let gallery = this.state.imageFiles;
+
+      for (let i = gallery.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [gallery[i], gallery[j]] = [gallery[j], gallery[i]];
+      }
+    }
+
     if (this.state.tobii.use) {
       localStorage.setItem('tobiiServer', this.state.tobii.server);
       this.startTobii();
@@ -955,6 +970,44 @@ export class MainComponent extends Component<Props, State> {
                       }
                     ></input>{' '}
                     Play Sounds
+                  </label>
+                </li>
+                {document.fullscreenEnabled ? (
+                  <li>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={this.state.rules.fullscreen}
+                        onChange={(e) =>
+                          this.setState({
+                            rules: {
+                              ...this.state.rules,
+                              fullscreen: e.target.checked,
+                            },
+                          })
+                        }
+                      ></input>{' '}
+                      Fullscreen
+                    </label>
+                  </li>
+                ) : (
+                  ''
+                )}
+                <li>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={this.state.rules.shuffleGallery}
+                      onChange={(e) =>
+                        this.setState({
+                          rules: {
+                            ...this.state.rules,
+                            shuffleGallery: e.target.checked,
+                          },
+                        })
+                      }
+                    ></input>{' '}
+                    Shuffle Gallery
                   </label>
                 </li>
               </ul>

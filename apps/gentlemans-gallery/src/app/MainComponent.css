@@ -1,6 +1,4 @@
-#renderPane {
-  user-select: none;
-}
+
 
 #renderPane.fadein{
 
@@ -18,6 +16,8 @@
 }
 
 #renderPane {
+  user-select: none;
+
   transition: transform 0.2s ease-out; /* Animation */
   border-radius: 0px;
   z-index: 998;
@@ -29,7 +29,7 @@
 }
 
 #renderPane.softfocus.saturate {
-  transition: filter 0.1s;
+  transition: filter 0.3s;
   filter: saturate(200%);
 }
 
