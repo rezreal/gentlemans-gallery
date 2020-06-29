@@ -88,11 +88,11 @@ const defaultRules: Rules = {
   softPunishRegions: [
     'FEMALE_BREAST_COVERED',
     'FEMALE_GENITALIA_COVERED',
+    'MALE_BREAST_EXPOSED',
     'BUTTOCKS_EXPOSED',
   ],
   hardPunishRegions: [
     'MALE_GENITALIA_EXPOSED',
-    'MALE_BREAST_EXPOSED',
     'FEMALE_BREAST_EXPOSED',
     'FEMALE_GENITALIA_EXPOSED',
     'ANUS_EXPOSED',
@@ -541,7 +541,40 @@ export class MainComponent extends Component<Props, State> {
         imageFiles: files,
         jsonFiles: {
           'man.jpg': {
-            output: { nsfw_score: 1, detections: [] },
+            output: { nsfw_score: 1, detections: [
+              {
+                bounding_box: [
+                  185,
+                  275,
+                  225,
+                  310,
+                ],
+                confidence: 1.0,
+                name: 'FACE_MALE',
+              },
+              {
+                bounding_box: [
+                  262,
+                  257,
+                  285,
+                  335,
+                ],
+                confidence: 1.0,
+                name: 'MALE_BREAST_EXPOSED',
+              },
+              {
+                bounding_box: [
+                  368,
+                  280,
+                  400,
+                  320,
+                ],
+                confidence: 1.0,
+                name: 'MALE_GENITALIA_EXPOSED',
+              }
+
+
+            ] },
             file: 'man.jpg',
           },
           'woman.jpg': {
@@ -558,6 +591,36 @@ export class MainComponent extends Component<Props, State> {
                   confidence: 1.0,
                   name: 'FACE_FEMALE',
                 },
+                {
+                  bounding_box: [
+                    447.0,
+                    512.0,
+                    514.0,
+                    680.0,
+                  ],
+                  confidence: 1.0,
+                  name: 'FEMALE_BREAST_EXPOSED',
+                },
+                {
+                  bounding_box: [
+                    670.0,
+                    562.0,
+                    730.0,
+                    626.0,
+                  ],
+                  confidence: 1.0,
+                  name: 'FEMALE_GENITALIA_EXPOSED',
+                },
+                {
+                  bounding_box: [
+                    550.0,
+                    540.0,
+                    645.0,
+                    664.0,
+                  ],
+                  confidence: 1.0,
+                  name: 'BELLY_EXPOSED',
+                }
               ],
             },
             file: 'woman.jpg',
