@@ -22,10 +22,6 @@
     "gentlemans-gallery": {
       "tags": []
     },
-    "gentlemans-gallery-e2e": {
-      "tags": [],
-      "implicitDependencies": ["gentlemans-gallery"]
-    },
     "ui": {
       "tags": []
     }

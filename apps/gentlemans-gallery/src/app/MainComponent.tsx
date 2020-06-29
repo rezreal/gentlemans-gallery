@@ -13,15 +13,16 @@ import {
 } from 'rxjs/operators';
 import { Cursor } from './Cursor';
 import './MainComponent.css';
-import {
+
+/*import {
   ButtplugClient,
   ButtplugClientDevice,
   ButtplugDeviceMessage,
   ButtplugBrowserWebsocketClientConnector,
 } from 'buttplug';
+*/
 
-//import { connect } from './browserMqtt';
-import { connect, MqttClient } from 'mqtt';
+import { connect } from './mqtt.min.js';
 
 interface Props {}
 
@@ -124,7 +125,7 @@ export class MainComponent extends Component<Props, State> {
         ...JSON.parse(localStorage.getItem('rules') || '{}'),
       },
       tobii: {
-        use: true,
+        use: false,
         disableMouse: false,
         server: 'ws://localhost:8887',
       },
@@ -155,7 +156,7 @@ export class MainComponent extends Component<Props, State> {
   tobiiScreenWidth: number = window.screen.width;
   tobiiScreenHeight: number = window.screen.height;
 
-  mqttClient: MqttClient | undefined;
+  mqttClient: any | undefined;
 
   private startTobii(): void {
     if (!this.state.tobii.use) {
@@ -203,12 +204,14 @@ export class MainComponent extends Component<Props, State> {
   }
 
   startButtplug() {
+    /*
     const client = new ButtplugClient('Gentlemans Library');
     client.addListener('disconnect', this.buttplugDisconnected);
 
     client.Connect(
       new ButtplugBrowserWebsocketClientConnector(this.state.buttplug.server)
     );
+    */
   }
 
   buttplugDisconnected() {
@@ -231,12 +234,12 @@ export class MainComponent extends Component<Props, State> {
       password: this.state.mqtt.auth ? this.state.mqtt.password : undefined,
       clean: true,
       clientId: 'gentlemans-gallery_' + Math.random().toString(16).substr(2, 8),
-      will: {
+      /*will: {
         topic: 'gentlemans-gallery/$state',
         payload: 'lost',
         retain: true,
         qos: 1,
-      },
+      },*/
     });
 
     this.mqttClient.on('connect', () => {
