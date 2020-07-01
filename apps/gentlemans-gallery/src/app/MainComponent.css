@@ -18,9 +18,11 @@
 #renderPane {
   user-select: none;
 
-  transition: transform 0.2s ease-out; /* Animation */
+  /*transition: transform 0.2s ease-out; /* Animation */
+  transition: none;
   border-radius: 0px;
   z-index: 998;
+
 }
 
 #renderPane.fadeout{
@@ -38,7 +40,8 @@
 }
 
 #renderPane.hardfocus{
-  transition: transform 0.25s ease-in, filter 0.25s;
+  transition: transform 0.3s ease-in, filter 0.25s;
   transform: scale(4);
-  filter: saturate(200%);
+  transition-duration: 0.3s !important;
+  filter: saturate(300%);
 }

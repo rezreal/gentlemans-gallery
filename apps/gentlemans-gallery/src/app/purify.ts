@@ -8,16 +8,16 @@ export interface PurifyDetection {
   /**
    * y1, x1, y2, x2
    */
-  "bounding_box": [number,number,number,number],
-  confidence: number,
-  name: DetectionType
+  readonly "bounding_box": [number,number,number,number],
+  readonly confidence: number,
+  readonly name: DetectionType
 }
 
 export interface PurifyMetadata {
   readonly output: {
     "nsfw_score": number,
-    detections: ReadonlyArray<PurifyDetection>
+    readonly detections: readonly PurifyDetection[]
   }
-  file: string
+  readonly file: string
 };
 

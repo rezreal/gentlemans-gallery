@@ -1,7 +1,7 @@
-import { PurifyMetadata, DetectionType } from './purify';
+import { PurifyMetadata, DetectionType, PurifyDetection } from './purify';
 import { Component, ChangeEvent, MouseEvent, RefObject } from 'react';
 import React from 'react';
-import { Subject, BehaviorSubject, of } from 'rxjs';
+import { Subject, BehaviorSubject, of, timer, interval } from 'rxjs';
 import {
   takeUntil,
   distinctUntilChanged,
@@ -10,6 +10,10 @@ import {
   delay,
   throttle,
   map,
+  filter,
+  debounceTime,
+  auditTime,
+  throttleTime,
 } from 'rxjs/operators';
 import { Cursor } from './Cursor';
 import './MainComponent.css';
@@ -23,6 +27,8 @@ import './MainComponent.css';
 */
 
 import { connect } from './mqtt.min.js';
+import { loadDemoImages } from './demo';
+import { Rules, defaultRules } from './rules';
 
 interface Props {}
 
@@ -32,78 +38,47 @@ type TopicWithMessage = {
   stopMessage?: string;
 };
 
-interface Rules {
-  focusDuration: number;
-  focusRegions: DetectionType[];
-  softPunishRegions: DetectionType[];
-  hardPunishRegions: DetectionType[];
-  showGaze: boolean;
-  allowSkipImage: boolean;
-  softFilter: 'pixelate' | 'saturate';
-  playSounds: boolean;
-  fullscreen: boolean;
-  shuffleGallery: boolean;
-}
-
 interface State {
-  mqtt: {
-    use: boolean;
-    server?: string;
-    clientId?: string;
-    auth: boolean;
-    username?: string;
-    password?: string;
-    topics: {
-      teaseTopic?: TopicWithMessage;
-      punishTopic?: TopicWithMessage;
-      renewRestraint?: TopicWithMessage;
-      unlockRestraint?: TopicWithMessage;
+  readonly mqtt: {
+    readonly use: boolean;
+    readonly server?: string;
+    readonly clientId?: string;
+    readonly auth: boolean;
+    readonly username?: string;
+    readonly password?: string;
+    readonly topics: {
+      readonly teaseTopic?: TopicWithMessage;
+      readonly punishTopic?: TopicWithMessage;
+      readonly renewRestraint?: TopicWithMessage;
     };
   };
-  buttplug: {
-    use: boolean;
-    server: string;
+  readonly buttplug: {
+    readonly use: boolean;
+    readonly server: string;
   };
-  tobii: {
-    use: boolean;
-    disableMouse: boolean;
-    server?: string;
+  readonly tobii: {
+    readonly use: boolean;
+    readonly disableMouse: boolean;
+    readonly server?: string;
   };
-  rules: Rules;
-  imageFiles: File[];
-  jsonFiles: { [_: string]: PurifyMetadata };
-  currentImage?: number;
-  currentImageData?: string;
-  currentJson?: PurifyMetadata;
-  cursorPosition: { x: number; y: number };
-  cursorHint?: 'NEXT' | 'SOFT' | 'HARD';
-  points: number;
-  phase: 'SETUP' | 'INGAME' | 'WON';
-  pauseUntil: number;
-}
+  readonly rules: Rules;
+  readonly imageFiles: readonly File[];
+  readonly jsonFiles: { [_: string]: PurifyMetadata };
+  readonly currentImage?: number;
+  readonly currentImageData?: string;
+  readonly currentImageName?: string;
+  readonly currentJson?: PurifyMetadata;
+  readonly transitionDuration?: number;
+  readonly cursorPosition: { x: number; y: number };
+  readonly cursorHint?: 'NEXT' | 'SOFT' | 'HARD';
+  readonly stats: {
+    readonly points: number;
+    readonly failures: number;
+  };
 
-const defaultRules: Rules = {
-  focusDuration: 5,
-  focusRegions: ['FACE_FEMALE', 'FACE_MALE'],
-  softPunishRegions: [
-    'FEMALE_BREAST_COVERED',
-    'FEMALE_GENITALIA_COVERED',
-    'MALE_BREAST_EXPOSED',
-    'BUTTOCKS_EXPOSED',
-  ],
-  hardPunishRegions: [
-    'MALE_GENITALIA_EXPOSED',
-    'FEMALE_BREAST_EXPOSED',
-    'FEMALE_GENITALIA_EXPOSED',
-    'ANUS_EXPOSED',
-  ],
-  showGaze: true,
-  allowSkipImage: true,
-  softFilter: 'saturate',
-  playSounds: true,
-  fullscreen: false,
-  shuffleGallery: false,
-};
+  readonly phase: 'SETUP' | 'INGAME' | 'WON';
+  readonly pauseUntil: number;
+}
 
 export class MainComponent extends Component<Props, State> {
   constructor(props) {
@@ -132,7 +107,7 @@ export class MainComponent extends Component<Props, State> {
       imageFiles: [],
       jsonFiles: {},
       cursorPosition: { x: 0, y: 0 },
-      points: 0,
+      stats: { points: 0, failures: 0 },
       phase: 'SETUP',
       pauseUntil: 0,
     };
@@ -243,7 +218,7 @@ export class MainComponent extends Component<Props, State> {
     });
 
     this.mqttClient.on('connect', () => {
-      console.info(`connected to ${this.state.mqtt.server}`);
+      //console.info(`connected to ${this.state.mqtt.server}`);
       this.mqttClient.publish('gentlemans-gallery/$state', 'ready', {
         qos: 1,
         retain: true,
@@ -271,6 +246,24 @@ export class MainComponent extends Component<Props, State> {
 
   componentDidMount(): void {
     (this.fileSelector.current as any).webkitdirectory = 'true';
+
+    interval(15000)
+      .pipe(
+        takeUntil(this.destroy$),
+        filter(
+          () =>
+            this.mqttClient?.connected &&
+            this.state.phase === 'INGAME' &&
+            this.state.mqtt.topics.renewRestraint !== undefined
+        )
+      )
+      .subscribe(() =>
+        this.sendMqtt(
+          this.state.mqtt.topics.renewRestraint.name,
+          this.state.mqtt.topics.renewRestraint.message,
+          1
+        )
+      );
 
     this.gazeHits$
       .pipe(
@@ -317,7 +310,7 @@ export class MainComponent extends Component<Props, State> {
         }),
         switchMap((zone) =>
           of(zone).pipe(
-            delay(zone === 'NEXT' ? this.state.rules.focusDuration * 1000 : 200)
+            delay(zone === 'NEXT' ? this.state.transitionDuration : 200)
           )
         ),
         tap((zone) => {
@@ -326,7 +319,9 @@ export class MainComponent extends Component<Props, State> {
           } else if (zone === 'HARD') {
             this.renderPane.current.classList.remove('hardfocus');
           }
-        })
+        }),
+        // not entirely sure why this is needed, avoids double submits
+        throttleTime(100)
       )
       .subscribe((zone) => {
         switch (zone) {
@@ -396,6 +391,12 @@ export class MainComponent extends Component<Props, State> {
     return undefined;
   }
 
+  private countHardPunishedZones(meta: PurifyMetadata): number {
+    return meta.output.detections.filter((detection) =>
+      this.state.rules.hardPunishRegions.includes(detection.name)
+    ).length;
+  }
+
   private punish(level: 'SOFT' | 'HARD') {
     if (this.state.mqtt.topics.punishTopic) {
       this.sendMqtt(
@@ -407,21 +408,33 @@ export class MainComponent extends Component<Props, State> {
       this.audioError.current.play();
     }
     if (level === 'HARD') {
+      const nextJsonFile = this.state.jsonFiles[
+        this.state.imageFiles[Math.max(0, this.state.currentImage - 1)].name
+      ];
       this.setState({
-        points: this.state.points - 10,
+        stats: {
+          ...this.state.stats,
+          points: this.state.stats.points - 10,
+          failures: this.state.stats.failures + 1,
+        },
         currentImage: Math.max(0, this.state.currentImage - 1),
+        currentImageName: this.state.imageFiles[
+          Math.max(0, this.state.currentImage - 1)
+        ].name,
         currentImageData: window.URL.createObjectURL(
           this.state.imageFiles[Math.max(0, this.state.currentImage - 1)]
         ),
-        currentJson: this.state.jsonFiles[
-          this.state.imageFiles[Math.max(0, this.state.currentImage - 1)].name
-        ],
+        currentJson: nextJsonFile,
+        transitionDuration:
+          (this.countHardPunishedZones(nextJsonFile) + 2) *
+          1000 *
+          this.state.rules.focusDuration,
       });
-      this.setState({ pauseUntil: Date.now() + 1200 });
+      this.setState({ pauseUntil: Date.now() + 1500 });
     } else if (level === 'SOFT') {
       this.setState((prev) => ({
         ...prev,
-        points: prev.points - 1,
+        stats: { ...prev.stats, points: prev.stats.points - 1 },
       }));
     }
   }
@@ -431,25 +444,40 @@ export class MainComponent extends Component<Props, State> {
 
     if (nextIndex >= this.state.imageFiles.length) {
       this.setState({ phase: 'WON' });
+      if (
+        this.mqttClient?.connected &&
+        this.state.mqtt.topics.renewRestraint?.stopMessage
+      ) {
+        this.sendMqtt(
+          this.state.mqtt.topics.renewRestraint.name,
+          this.state.mqtt.topics.renewRestraint.stopMessage,
+          1
+        );
+      }
       document.exitFullscreen();
       return;
     }
-
+    const nextImageFile = this.state.imageFiles[nextIndex];
+    const nextJsonFile = this.state.jsonFiles[nextImageFile.name];
     this.setState({
-      points: this.state.points + (skipped ? -10 : 20),
+      stats: {
+        ...this.state.stats,
+        points: this.state.stats.points + (skipped ? -10 : 20),
+      },
       currentImage: nextIndex,
-      currentImageData: window.URL.createObjectURL(
-        this.state.imageFiles[nextIndex]
-      ),
-      currentJson: this.state.jsonFiles[this.state.imageFiles[nextIndex].name],
+      currentImageName: this.state.imageFiles[nextIndex].name,
+      currentImageData: window.URL.createObjectURL(nextImageFile),
+      currentJson: nextJsonFile,
+      transitionDuration:
+        (this.countHardPunishedZones(nextJsonFile) + 2) *
+        1000 *
+        this.state.rules.focusDuration,
     });
     this.renderPane.current.classList.remove('fadein');
     void this.renderPane.current.offsetWidth;
     this.renderPane.current.classList.add('fadein');
     this.setState({ pauseUntil: Date.now() + 1000 });
   }
-
-  private handleMqttSubmit() {}
 
   private handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
     if (this.state.tobii.disableMouse) {
@@ -464,6 +492,16 @@ export class MainComponent extends Component<Props, State> {
     this.moveToClient(nativeCoords);
   }
 
+  private sortByRelevance(a: DetectionType, b: DetectionType): number {
+    return this.toPriority(a) - this.toPriority(b);
+  }
+  private toPriority(dt: DetectionType): number {
+    if (this.state.rules.focusRegions.includes(dt)) return 0;
+    if (this.state.rules.hardPunishRegions.includes(dt)) return 1;
+    if (this.state.rules.softPunishRegions.includes(dt)) return 2;
+    return 3;
+  }
+
   private moveToClient(clientCoordinates: { x: number; y: number }): void {
     const renderPane = this.renderPane.current;
     const imageCoords = renderPane.getBoundingClientRect();
@@ -476,13 +514,17 @@ export class MainComponent extends Component<Props, State> {
       y: (r.y * renderPane.naturalHeight) / imageCoords.height,
     };
 
-    const tolerance = MainComponent.imageSize(renderPane) * 0.05;
-    const hit = this.state.currentJson?.output.detections.find((detection) => {
-      const rect = MainComponent.purifyBoundingBoxToRectangle(
-        detection.bounding_box
-      );
-      return MainComponent.distance(rect, rScaledToBoundingBox) < tolerance;
-    });
+    const tolerance = MainComponent.imageSize(renderPane) * 0.04;
+    const hit:
+      | PurifyDetection
+      | undefined = this.state.currentJson?.output.detections
+      .filter((detection) => {
+        const rect = MainComponent.purifyBoundingBoxToRectangle(
+          detection.bounding_box
+        );
+        return MainComponent.distance(rect, rScaledToBoundingBox) < tolerance;
+      })
+      .sort((a, b) => this.sortByRelevance(a.name, b.name))[0];
 
     if (hit) {
       // translate the zoom around the center of the detection
@@ -525,108 +567,6 @@ export class MainComponent extends Component<Props, State> {
       boundingBox[0],
       boundingBox[3] - boundingBox[1],
       boundingBox[2] - boundingBox[0]
-    );
-  }
-
-  private loadDemoImages() {
-    Promise.all([
-      fetch('assets/demo/woman.jpg')
-        .then((r) => r.blob())
-        .then((blob) => new File([blob], 'woman.jpg', {})),
-      fetch('assets/demo/man.jpg')
-        .then((r) => r.blob())
-        .then((blob) => new File([blob], 'man.jpg', {})),
-    ]).then((files) =>
-      this.setState({
-        imageFiles: files,
-        jsonFiles: {
-          'man.jpg': {
-            output: { nsfw_score: 1, detections: [
-              {
-                bounding_box: [
-                  185,
-                  275,
-                  225,
-                  310,
-                ],
-                confidence: 1.0,
-                name: 'FACE_MALE',
-              },
-              {
-                bounding_box: [
-                  262,
-                  257,
-                  285,
-                  335,
-                ],
-                confidence: 1.0,
-                name: 'MALE_BREAST_EXPOSED',
-              },
-              {
-                bounding_box: [
-                  368,
-                  280,
-                  400,
-                  320,
-                ],
-                confidence: 1.0,
-                name: 'MALE_GENITALIA_EXPOSED',
-              }
-
-
-            ] },
-            file: 'man.jpg',
-          },
-          'woman.jpg': {
-            output: {
-              nsfw_score: 1,
-              detections: [
-                {
-                  bounding_box: [
-                    288.84649658203125,
-                    546.881103515625,
-                    368.3436584472656,
-                    625.3768310546875,
-                  ],
-                  confidence: 1.0,
-                  name: 'FACE_FEMALE',
-                },
-                {
-                  bounding_box: [
-                    447.0,
-                    512.0,
-                    514.0,
-                    680.0,
-                  ],
-                  confidence: 1.0,
-                  name: 'FEMALE_BREAST_EXPOSED',
-                },
-                {
-                  bounding_box: [
-                    670.0,
-                    562.0,
-                    730.0,
-                    626.0,
-                  ],
-                  confidence: 1.0,
-                  name: 'FEMALE_GENITALIA_EXPOSED',
-                },
-                {
-                  bounding_box: [
-                    550.0,
-                    540.0,
-                    645.0,
-                    664.0,
-                  ],
-                  confidence: 1.0,
-                  name: 'BELLY_EXPOSED',
-                }
-              ],
-            },
-            file: 'woman.jpg',
-          },
-        },
-      })
     );
   }
 
@@ -677,17 +617,26 @@ export class MainComponent extends Component<Props, State> {
   }
 
   startGame(): void {
-    if (this.state.rules.fullscreen) {
-      document.body.requestFullscreen();
-    }
+    if (
+      this.state.mqtt.topics.renewRestraint?.name &&
+      this.mqttClient?.connected
+    )
+      this.sendMqtt(
+        this.state.mqtt.topics.renewRestraint.name,
+        this.state.mqtt.topics.renewRestraint.message,
+        1
+      );
 
     if (this.state.rules.shuffleGallery) {
-      let gallery = this.state.imageFiles;
+      let gallery = [...this.state.imageFiles];
 
       for (let i = gallery.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [gallery[i], gallery[j]] = [gallery[j], gallery[i]];
       }
+      this.setState({
+        imageFiles: gallery,
+      });
     }
 
     if (this.state.tobii.use) {
@@ -717,7 +666,7 @@ export class MainComponent extends Component<Props, State> {
         {this.state.phase === 'INGAME' ? (
           <header>
             <h5>
-              Points: {this.state.points}{' '}
+              Points: {this.state.stats.points}{' '}
               {this.state.rules.allowSkipImage &&
               this.state.imageFiles.length > 0 ? (
                 <button onClick={() => this.nextImage(true)}>Skip Image</button>
@@ -732,18 +681,23 @@ export class MainComponent extends Component<Props, State> {
         <main>
           <div className="flex">
             {this.state.phase === 'WON' ? (
-              <h1>You won! Your score: {this.state.points}</h1>
+              <h1>You won! Your score: {this.state.stats.points}</h1>
             ) : this.state.phase === 'INGAME' ? (
               ''
             ) : (
               ''
             )}
+
             <img
               id="renderPane"
               ref={this.renderPane}
               src={this.state.currentImageData}
+              data-imagename={this.state.currentImageName}
               onMouseMove={this.handleMouseMoveOnPane}
               className={this.state.rules.softFilter}
+              style={{
+                transitionDuration: `${this.state.transitionDuration}ms`,
+              }}
             ></img>
             <svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="0">
               <defs>
@@ -764,11 +718,13 @@ export class MainComponent extends Component<Props, State> {
               src="assets/ding.mp3"
               ref={this.audioDing}
               autoPlay={false}
+              preload={this.state.rules.playSounds ? 'auto' : 'none'}
             ></audio>
             <audio
               src="assets/beep-03.mp3"
               ref={this.audioError}
               autoPlay={false}
+              preload={this.state.rules.playSounds ? 'auto' : 'none'}
             ></audio>
 
             {this.state.rules.showGaze ? (
@@ -1110,7 +1066,13 @@ export class MainComponent extends Component<Props, State> {
               ></input>
               <p>
                 Suggestions/PRs for a public domain sample gallery are welcome!
-                <button onClick={() => this.loadDemoImages()}>
+                <button
+                  onClick={() =>
+                    loadDemoImages().then((dis) =>
+                      this.setState({ ...this.state, ...dis })
+                    )
+                  }
+                >
                   Load demo images
                 </button>
               </p>
@@ -1348,6 +1310,87 @@ export class MainComponent extends Component<Props, State> {
                                   ...this.state.mqtt.topics,
                                   punishTopic: {
                                     ...this.state.mqtt.topics.punishTopic,
+                                    stopMessage: e.target.value?.trim(),
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                  </ul>
+                </div>
+                <div className="form-group">
+                  <legend>Restraints</legend>
+                  <ul>
+                    <li>
+                      <label>
+                        Renew Restraints
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.renewRestraint?.name}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  renewRestraint: {
+                                    ...(this.state.mqtt.topics
+                                      .renewRestraint || {
+                                      name: '',
+                                      message: '',
+                                    }),
+                                    name: e.target.value,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Message (this is posted every 15 seconds until the game
+                        is won)
+                        <input
+                          type="text"
+                          value={this.state.mqtt.topics.renewRestraint?.message}
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  renewRestraint: {
+                                    ...this.state.mqtt.topics.renewRestraint,
+                                    message: e.target.value,
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        ></input>
+                      </label>
+                    </li>
+                    <li>
+                      <label>
+                        Open Message (sent when the game is won)
+                        <input
+                          type="text"
+                          value={
+                            this.state.mqtt.topics.renewRestraint?.stopMessage
+                          }
+                          onChange={(e) =>
+                            this.setState({
+                              mqtt: {
+                                ...this.state.mqtt,
+                                topics: {
+                                  ...this.state.mqtt.topics,
+                                  renewRestraint: {
+                                    ...this.state.mqtt.topics.renewRestraint,
                                     stopMessage: e.target.value?.trim(),
                                   },
                                 },
