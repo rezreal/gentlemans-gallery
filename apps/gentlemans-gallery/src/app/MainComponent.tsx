@@ -757,6 +757,42 @@ export class MainComponent extends Component<Props, State> {
           {this.state.phase === 'SETUP' ? (
             <div className="setupForms">
               <details open>
+                <summary>Select local gallery</summary>
+                <p>
+                  This gallery uses the json metadata from the{' '}
+                  <a href="https://pury.fi/" target="_blank">
+                    pury.fi
+                  </a>{' '}
+                  NSFW model. To create a gallery, fetch the pury.fi offline tool{' '}
+                  <a href="https://discord.com/channels/347085342119297027/504704914568773670/629019675623424010">
+                    as described here
+                  </a>
+                  , start the detection for your images. Then select{' '}
+                  <em>Save JSON-Metadata</em> and run <em>Save Images</em>. Now
+                  copy all original images and all files from the{' '}
+                  <em>output/json</em> folder into a single directory and select
+                  it here.
+                </p>
+                <input
+                  ref={this.fileSelector}
+                  type="file"
+                  onChange={(e) => this.handleFileSelection(e)}
+                ></input>
+                <p>
+                  Suggestions/PRs for a public domain sample gallery are welcome!
+                  <button
+                    onClick={() =>
+                      loadDemoImages().then((dis) =>
+                        this.setState({ ...this.state, ...dis })
+                      )
+                    }
+                  >
+                    Load demo images
+                  </button>
+                </p>
+              </details>
+
+              <details open>
                 <summary>Rules</summary>
                 <ul>
                   <li>
@@ -1053,41 +1089,6 @@ export class MainComponent extends Component<Props, State> {
                 <button onClick={(e) => this.setState({ rules: defaultRules })}>
                   Reset to defaults
                 </button>
-              </details>
-              <details open>
-                <summary>Select local gallery</summary>
-                <p>
-                  This gallery uses the json metadata from the{' '}
-                  <a href="https://pury.fi/" target="_blank">
-                    pury.fi
-                  </a>{' '}
-                  NSFW model. To create a gallery, fetch the pury.fi offline tool{' '}
-                  <a href="https://discord.com/channels/347085342119297027/504704914568773670/629019675623424010">
-                    as described here
-                  </a>
-                  , start the detection for your images. Then select{' '}
-                  <em>Save JSON-Metadata</em> and run <em>Save Images</em>. Now
-                  copy all original images and all files from the{' '}
-                  <em>output/json</em> folder into a single directory and select
-                  it here.
-                </p>
-                <input
-                  ref={this.fileSelector}
-                  type="file"
-                  onChange={(e) => this.handleFileSelection(e)}
-                ></input>
-                <p>
-                  Suggestions/PRs for a public domain sample gallery are welcome!
-                  <button
-                    onClick={() =>
-                      loadDemoImages().then((dis) =>
-                        this.setState({ ...this.state, ...dis })
-                      )
-                    }
-                  >
-                    Load demo images
-                  </button>
-                </p>
               </details>
 
               <details>
