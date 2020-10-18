@@ -46,6 +46,7 @@
     "@types/node": "^12.0.2",
     "@types/react": "16.9.17",
     "@types/react-dom": "16.9.4",
+    "@types/web-bluetooth": "0.0.9",
     "@typescript-eslint/eslint-plugin": "2.19.2",
     "@typescript-eslint/parser": "2.19.2",
     "dotenv": "6.2.0",
@@ -60,6 +61,6 @@
     "ts-jest": "25.2.1",
     "ts-node": "~7.0.0",
     "tslint": "~6.0.0",
-    "typescript": "~3.8.3"
+    "typescript": "~3.9.7"
   }
 }

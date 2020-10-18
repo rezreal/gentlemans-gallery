@@ -65,11 +65,17 @@
 .app details {
   border-radius: 4px;
   color: #333;
-  background-color: rgba(0, 0, 0, 0);
+  background-color: transparent;
   border: 1px solid rgba(0, 0, 0, 0.12);
   padding: 3px 9px;
   margin-bottom: 9px;
   margin-top: 30px;
+}
+@media (prefers-color-scheme: dark) {
+  .app details {
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
 }
 
 .app summary {
