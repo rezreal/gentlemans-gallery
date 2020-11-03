@@ -5,16 +5,6 @@
 .app {
   font-family: sans-serif;
   min-width: 300px;
-  max-width: 600px;
-  margin: 50px auto;
-}
-
-.app .gutter-left {
-  margin-left: 9px;
-}
-
-.app .col-span-2 {
-  grid-column: span 2;
 }
 
 .app .flex {

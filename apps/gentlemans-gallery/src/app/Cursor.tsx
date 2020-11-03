@@ -3,6 +3,7 @@ import {
 } from 'react';
 import React from 'react';
 import './Cursor.css';
+import {RegionType} from "./rules";
 
 function calculateStyle(size: number, position: {x:number, y:number}) {
   return {
@@ -16,7 +17,7 @@ function calculateStyle(size: number, position: {x:number, y:number}) {
 interface Props {
   position: { x: number; y: number };
   size: number;
-  hint?: 'NEXT' | 'SOFT' | 'HARD'
+  hint?: RegionType
 }
 
 export const Cursor: FunctionComponent<Props> = ({ position, size, hint }) => (

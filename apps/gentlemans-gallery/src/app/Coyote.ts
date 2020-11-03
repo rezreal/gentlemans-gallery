@@ -135,10 +135,10 @@ export async function pairDevice(batteryChangeCallback?: (batteryLevel: number) 
     console.log("Getting Coyote Service...");
     const service = await server.getPrimaryService(coyoteService);
 
-    console.log("Getting Config Characteristic...");
+    console.log("Getting ConfigMenu Characteristic...");
     const config = await service.getCharacteristic(configCharacteristic);
 
-    console.log("Reading Config Characteristic...");
+    console.log("Reading ConfigMenu Characteristic...");
     // read: 3 bytes: flipFirstAndThirdByte(skip(5) ~ uint(11).as("maxPower") ~ uint8.as("powerStep"))
     const configValue = await config.readValue();
     flipFirstAndThirdByte(configValue.buffer);

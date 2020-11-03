@@ -83,3 +83,5 @@ type ProtocolFrame = GazePointDataFrame | EyePositionDataFrame | HeadPoseDataFra
 
 type ProtocolCommand = "state" | "startGazePoint" | "startEyePosition" | "startHeadPose" |
     "stopGazePoint" | "stopEyePosition" | "stopEyePose";
+
+

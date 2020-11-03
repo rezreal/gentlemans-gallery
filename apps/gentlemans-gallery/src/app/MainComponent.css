@@ -1,11 +1,3 @@
-
-
-#renderPane.fadein{
-
-  animation: blur 1s ease-in;
-
-}
-
 @keyframes blur {
   0% {
     filter: blur(10px);
@@ -15,31 +7,44 @@
   }
 }
 
-#renderPane {
+div.renderContainer {
+
+}
+
+.renderPane {
   user-select: none;
 
   /*transition: transform 0.2s ease-out; /* Animation */
-  transition: none;
+  transition: filter 0.1s;
   border-radius: 0px;
   z-index: 998;
-
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-right: -50%;
+  transform: translate(-50%, -50%)
 }
 
-#renderPane.fadeout{
-  transition: transform 5s ease-in;
-  transform: scale(2);
+.renderPane.fadein{
+  animation: blur 1.5s ease-in;
 }
 
-#renderPane.softfocus.saturate {
-  transition: filter 0.3s;
-  filter: saturate(200%);
+.renderPane[data-region='FOCUS'] {
+  transition: transform 5s ease-in, filter 5s;
+  /*transform: scale(1.2);*/
+  filter: saturate(120%);
 }
 
-#renderPane.softfocus.pixelate {
+.renderPane[data-region='SOFT_PUNISH'].saturate {
+  transition: filter 0.1s;
+  filter: saturate(10%);
+}
+
+.renderPane[data-region='SOFT_PUNISH'].pixelate {
   filter: url('#pixelate');
 }
 
-#renderPane.hardfocus{
+.renderPane[data-region='HARD_PUNISH']{
   transition: transform 0.3s ease-in, filter 0.25s;
   transform: scale(4);
   transition-duration: 0.3s !important;

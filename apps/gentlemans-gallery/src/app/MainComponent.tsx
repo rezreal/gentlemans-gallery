@@ -1,7 +1,7 @@
-import { PurifyMetadata, DetectionType, PurifyDetection } from './purify';
-import { Component, ChangeEvent, MouseEvent, RefObject } from 'react';
+import {PurifyMetadata, DetectionType, PurifyDetection} from './purify';
+import {Component, ChangeEvent, MouseEvent, RefObject} from 'react';
 import React from 'react';
-import { Subject, BehaviorSubject, of, timer, interval } from 'rxjs';
+import {Subject, BehaviorSubject, of, interval} from 'rxjs';
 import {
   takeUntil,
   distinctUntilChanged,
@@ -13,60 +13,31 @@ import {
   filter,
   throttleTime,
 } from 'rxjs/operators';
-import { Cursor } from './Cursor';
+import {Cursor} from './Cursor';
 import './MainComponent.css';
-
-
-import { connect } from './mqtt.min.js';
-import { loadDemoImages } from './demo';
-import { Rules, defaultRules } from './rules';
+import {connect} from './mqtt.min.js';
 import {CoyoteDevice, pairDevice} from "./Coyote";
+import {ConfigMenu} from "./ConfigMenu";
+import {DEFAULT_SETTINGS, Settings} from "./settings";
+import {RegionType} from "./rules";
 
-interface Props {}
+interface Props {
+}
 
-type TopicWithMessage = {
-  name: string;
-  message: string;
-  stopMessage?: string;
-};
+interface State extends Settings {
 
-interface State {
-  readonly mqtt: {
-    readonly use: boolean;
-    readonly server?: string;
-    readonly clientId?: string;
-    readonly auth: boolean;
-    readonly username?: string;
-    readonly password?: string;
-    readonly topics: {
-      readonly teaseTopic?: TopicWithMessage;
-      readonly punishTopic?: TopicWithMessage;
-      readonly renewRestraint?: TopicWithMessage;
-    };
-  };
-  readonly buttplug: {
-    readonly use: boolean;
-    readonly server: string;
-  };
-  readonly tobii: {
-    readonly use: boolean;
-    readonly disableMouse: boolean;
-    readonly server?: string;
-  };
-  readonly coyote : {
-    readonly use: boolean;
-    readonly pairedDeviceId?: string;
-  },
-  readonly rules: Rules;
-  readonly imageFiles: readonly File[];
+  readonly slides: readonly { images: readonly File[] }[]
+
   readonly jsonFiles: { [_: string]: PurifyMetadata };
-  readonly currentImage?: number;
-  readonly currentImageData?: string;
-  readonly currentImageName?: string;
-  readonly currentJson?: PurifyMetadata;
-  readonly transitionDuration?: number;
+  readonly currentSlide: number;
+  readonly currentSlideData: {
+    readonly dataUrl: string;
+    readonly name: string;
+    readonly json: PurifyMetadata;
+  }[];
+
   readonly cursorPosition: { x: number; y: number };
-  readonly cursorHint?: 'NEXT' | 'SOFT' | 'HARD';
+  readonly cursorHint?: RegionType;
   readonly stats: {
     readonly points: number;
     readonly failures: number;
@@ -77,48 +48,27 @@ interface State {
 }
 
 const DEFAULT_STATE: State = {
-  buttplug: {
-    use: false,
-    server: 'wss://localhost',
-  },
-  mqtt: {
-    use: false,
-    server: 'wss://test.mosquitto.org:8081',
-    topics: {},
-    auth: false,
-    ...JSON.parse(localStorage.getItem('mqtt') || '{}'),
-  },
-  rules: {
-    ...defaultRules,
-    ...JSON.parse(localStorage.getItem('rules') || '{}'),
-  },
-  tobii: {
-    use: false,
-    disableMouse: false,
-    server: 'ws://localhost:8887',
-    ...JSON.parse(localStorage.getItem('tobii') || '{}')
-  },
-  coyote: {
-    use: false,
-    ...JSON.parse(localStorage.getItem('coyote') || '{}')
-  },
-  imageFiles: [],
+  ...DEFAULT_SETTINGS,
+  slides: [],
+  currentSlide: 0,
+  currentSlideData: [],
   jsonFiles: {},
-  cursorPosition: { x: 0, y: 0 },
-  stats: { points: 0, failures: 0 },
+  cursorPosition: {x: -1000, y: -1000},
+  stats: {points: 0, failures: 0},
   phase: 'SETUP',
   pauseUntil: 0,
 }
+
 
 export class MainComponent extends Component<Props, State> {
   constructor(props) {
     super(props);
     this.state = DEFAULT_STATE;
-    this.handleFileSelection = this.handleFileSelection.bind(this);
-    this.nextImage = this.nextImage.bind(this);
+    this.startCoyote = this.startCoyote.bind(this)
+    this.handlePurifyFileSelection = this.handlePurifyFileSelection.bind(this);
+    this.nextSlide = this.nextSlide.bind(this);
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
     this.renderPane = React.createRef();
-    this.fileSelector = React.createRef();
     this.audioDing = React.createRef();
     this.audioError = React.createRef();
   }
@@ -128,6 +78,7 @@ export class MainComponent extends Component<Props, State> {
   );
   eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject(false);
   presence$: BehaviorSubject<boolean> = new BehaviorSubject(false);
+  ttsSpeaking$: BehaviorSubject<boolean> = new BehaviorSubject(false);
   destroy$: Subject<unknown> = new Subject<unknown>();
 
   tobiiWs: WebSocket | undefined;
@@ -138,7 +89,9 @@ export class MainComponent extends Component<Props, State> {
   mqttClient: any | undefined;
 
   private async startCoyote(): Promise<void> {
-    const [coyoteState, coyoteDevice] = await pairDevice((level) => { console.info(`Coyote at battery-level ${level}`)},
+    const [coyoteState, coyoteDevice] = await pairDevice((level) => {
+        console.info(`Coyote at battery-level ${level}`)
+      },
       (power) => console.info(`Coyote at power-level ${power})`))
     this.coyoteDevice = coyoteDevice;
   }
@@ -205,7 +158,7 @@ export class MainComponent extends Component<Props, State> {
 
   sendMqtt(topic: string, message: string, qos?: 0 | 1 | 2) {
     if (this.mqttClient && this.mqttClient.connected) {
-      this.mqttClient.publish(topic, message, { qos: qos ?? 0 });
+      this.mqttClient.publish(topic, message, {qos: qos ?? 0});
     }
   }
 
@@ -255,7 +208,7 @@ export class MainComponent extends Component<Props, State> {
   }
 
   componentDidMount(): void {
-    (this.fileSelector.current as any).webkitdirectory = 'true';
+
 
     interval(15000)
       .pipe(
@@ -284,22 +237,21 @@ export class MainComponent extends Component<Props, State> {
             const delayUntil = Math.max(0, this.state.pauseUntil - Date.now());
             return of(false).pipe(delay(delayUntil));
           },
-          { leading: true, trailing: true }
+          {leading: true, trailing: true}
         ),
-        map((z) => this.detectionToZone(z)),
-        tap((zone) => {
-          this.renderPane.current.classList.remove('fadeout');
-          this.renderPane.current.classList.remove('hardfocus');
-          if (zone === 'NEXT') {
+        map((z) => this.detectionToRegionType(z)),
+        tap((regionType) => {
+          this.renderPane.current.dataset.region = null;
+          if (regionType === 'FOCUS') {
             void this.renderPane.current.offsetWidth;
-            this.renderPane.current.classList.add('fadeout');
+            this.renderPane.current.dataset.region = 'FOCUS';
             if (this.state.mqtt.topics.teaseTopic) {
               this.sendMqtt(
                 this.state.mqtt.topics.teaseTopic.name,
                 this.state.mqtt.topics.teaseTopic.message
               );
             }
-          } else if (zone === undefined) {
+          } else if (regionType === undefined) {
             if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
               this.sendMqtt(
                 this.state.mqtt.topics.teaseTopic.name,
@@ -308,34 +260,29 @@ export class MainComponent extends Component<Props, State> {
               );
             }
           }
-          if (zone === 'HARD') {
+          if (regionType === 'HARD_PUNISH') {
             void this.renderPane.current.offsetWidth;
-            this.renderPane.current.classList.add('hardfocus');
+            this.renderPane.current.dataset.region = 'HARD_PUNISH';
           }
-          if (zone === 'SOFT') {
-            this.renderPane.current.classList.add('softfocus');
-          } else {
-            this.renderPane.current.classList.remove('softfocus');
+          if (regionType === 'SOFT_PUNISH') {
+            this.renderPane.current.dataset.region = 'SOFT_PUNISH';
           }
+
         }),
         switchMap((zone) =>
           of(zone).pipe(
-            delay(zone === 'NEXT' ? this.state.transitionDuration : 200)
+            delay(zone === 'FOCUS' ? this.state.rules.focusDuration * 1000 : 200)
           )
         ),
-        tap((zone) => {
-          if (zone === 'NEXT') {
-            this.renderPane.current.classList.remove('fadeout');
-          } else if (zone === 'HARD') {
-            this.renderPane.current.classList.remove('hardfocus');
-          }
+        tap((regionType) => {
+          this.renderPane.current.dataset.region = null;
         }),
         // not entirely sure why this is needed, avoids double submits
         throttleTime(100)
       )
-      .subscribe((zone) => {
-        switch (zone) {
-          case 'NEXT':
+      .subscribe((regionType) => {
+        switch (regionType) {
+          case 'FOCUS':
             if (this.state.rules.playSounds) {
               this.audioDing.current.play();
             }
@@ -346,12 +293,12 @@ export class MainComponent extends Component<Props, State> {
               );
             }
 
-            this.nextImage(false);
+            this.nextSlide(false);
             break;
           case undefined:
             break;
           default:
-            this.punish(zone);
+            this.punish(regionType);
         }
       });
   }
@@ -365,49 +312,33 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private readonly renderPane: RefObject<HTMLImageElement>;
-  private readonly fileSelector: RefObject<HTMLInputElement>;
   private readonly audioDing: RefObject<HTMLAudioElement>;
   private readonly audioError: RefObject<HTMLAudioElement>;
 
-  private static arrayBufferToJsonObject(data: ArrayBuffer): unknown {
-    var dataView = new DataView(data);
-    var decoder = new TextDecoder('utf8');
-    return JSON.parse(decoder.decode(dataView));
-  }
-
-  private static extractImageFilename(path: String): string {
-    if (path.startsWith('/')) {
-      return path.substring(path.lastIndexOf('/') + 1);
-    } else {
-      // assuming a windows path separator
-      return path.substring(path.lastIndexOf('\\') + 1);
-    }
-  }
-
-  private detectionToZone(
+  private detectionToRegionType(
     name: DetectionType
-  ): 'NEXT' | 'SOFT' | 'HARD' | undefined {
-    if (this.state.rules.focusRegions.some((e) => e === name)) {
-      return 'NEXT';
+  ): RegionType | undefined {
+    if (this.state.rules.regionMapping.FOCUS.some((e) => e === name)) {
+      return 'FOCUS';
     }
 
-    if (this.state.rules.hardPunishRegions.some((e) => e === name)) {
-      return 'HARD';
+    if (this.state.rules.regionMapping.HARD_PUNISH.some((e) => e === name)) {
+      return 'HARD_PUNISH';
     }
 
-    if (this.state.rules.softPunishRegions.some((e) => e === name)) {
-      return 'SOFT';
+    if (this.state.rules.regionMapping.SOFT_PUNISH.some((e) => e === name)) {
+      return 'SOFT_PUNISH';
     }
     return undefined;
   }
 
   private countHardPunishedZones(meta: PurifyMetadata): number {
     return meta.output.detections.filter((detection) =>
-      this.state.rules.hardPunishRegions.includes(detection.name)
+      this.state.rules.regionMapping.HARD_PUNISH.includes(detection.name)
     ).length;
   }
 
-  private punish(level: 'SOFT' | 'HARD') {
+  private punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
     if (this.state.mqtt.topics.punishTopic) {
       this.sendMqtt(
         this.state.mqtt.topics.punishTopic.name,
@@ -417,43 +348,41 @@ export class MainComponent extends Component<Props, State> {
     if (this.state.rules.playSounds) {
       this.audioError.current.play();
     }
-    if (level === 'HARD') {
-      const nextJsonFile = this.state.jsonFiles[
-        this.state.imageFiles[Math.max(0, this.state.currentImage - 1)].name
-      ];
+    if (level === 'HARD_PUNISH') {
+
+      const nextSlideIndex = Math.max(0, this.state.currentSlide -1)
       this.setState({
         stats: {
           ...this.state.stats,
           points: this.state.stats.points - 10,
           failures: this.state.stats.failures + 1,
         },
-        currentImage: Math.max(0, this.state.currentImage - 1),
-        currentImageName: this.state.imageFiles[
-          Math.max(0, this.state.currentImage - 1)
-        ].name,
-        currentImageData: window.URL.createObjectURL(
-          this.state.imageFiles[Math.max(0, this.state.currentImage - 1)]
-        ),
-        currentJson: nextJsonFile,
-        transitionDuration:
-          (this.countHardPunishedZones(nextJsonFile) + 2) *
-          1000 *
-          this.state.rules.focusDuration,
+        currentSlide: nextSlideIndex,
+        currentSlideData: this.loadSlide(nextSlideIndex),
       });
-      this.setState({ pauseUntil: Date.now() + 1500 });
-    } else if (level === 'SOFT') {
+      this.setState({pauseUntil: Date.now() + 1500});
+    } else if (level === 'SOFT_PUNISH') {
       this.setState((prev) => ({
         ...prev,
-        stats: { ...prev.stats, points: prev.stats.points - 1 },
+        stats: {...prev.stats, points: prev.stats.points - 1},
       }));
     }
   }
 
-  private nextImage(skipped: boolean) {
-    const nextIndex = (this.state.currentImage ?? -1) + 1;
+  private loadSlide(index:number) {
+    const images = this.state.slides[index ].images;
+    return images.map(imgFile => ({
+      name: imgFile.name,
+      json: this.state.jsonFiles[imgFile.name],
+      dataUrl: window.URL.createObjectURL(imgFile),
+    }));
+  }
 
-    if (nextIndex >= this.state.imageFiles.length) {
-      this.setState({ phase: 'WON' });
+  private nextSlide(skipped: boolean) {
+    const nextSlideIndex = this.state.currentSlide + 1;
+
+    if (nextSlideIndex >= this.state.slides.length) {
+      this.setState({phase: 'WON'});
       if (
         this.mqttClient?.connected &&
         this.state.mqtt.topics.renewRestraint?.stopMessage
@@ -467,26 +396,19 @@ export class MainComponent extends Component<Props, State> {
       document.exitFullscreen();
       return;
     }
-    const nextImageFile = this.state.imageFiles[nextIndex];
-    const nextJsonFile = this.state.jsonFiles[nextImageFile.name];
+
     this.setState({
       stats: {
         ...this.state.stats,
         points: this.state.stats.points + (skipped ? -10 : 20),
       },
-      currentImage: nextIndex,
-      currentImageName: this.state.imageFiles[nextIndex].name,
-      currentImageData: window.URL.createObjectURL(nextImageFile),
-      currentJson: nextJsonFile,
-      transitionDuration:
-        (this.countHardPunishedZones(nextJsonFile) + 2) *
-        1000 *
-        this.state.rules.focusDuration,
+      currentSlide: nextSlideIndex,
+      currentSlideData: this.loadSlide(nextSlideIndex)
     });
     this.renderPane.current.classList.remove('fadein');
     void this.renderPane.current.offsetWidth;
     this.renderPane.current.classList.add('fadein');
-    this.setState({ pauseUntil: Date.now() + 1000 });
+    this.setState({pauseUntil: Date.now() + 1000});
   }
 
   private handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
@@ -505,10 +427,11 @@ export class MainComponent extends Component<Props, State> {
   private sortByRelevance(a: DetectionType, b: DetectionType): number {
     return this.toPriority(a) - this.toPriority(b);
   }
+
   private toPriority(dt: DetectionType): number {
-    if (this.state.rules.focusRegions.includes(dt)) return 0;
-    if (this.state.rules.hardPunishRegions.includes(dt)) return 1;
-    if (this.state.rules.softPunishRegions.includes(dt)) return 2;
+    if (this.state.rules.regionMapping.FOCUS.includes(dt)) return 0;
+    if (this.state.rules.regionMapping.HARD_PUNISH.includes(dt)) return 1;
+    if (this.state.rules.regionMapping.SOFT_PUNISH.includes(dt)) return 2;
     return 3;
   }
 
@@ -525,15 +448,14 @@ export class MainComponent extends Component<Props, State> {
     };
 
     const tolerance = MainComponent.imageSize(renderPane) * 0.04;
-    const hit: PurifyDetection | undefined =
-      this.state.currentJson?.output.detections
-      .filter((detection) => {
-        const rect = MainComponent.purifyBoundingBoxToRectangle(
-          detection.bounding_box
-        );
-        return MainComponent.distance(rect, rScaledToBoundingBox) < tolerance;
-      })
-      .sort((a, b) => this.sortByRelevance(a.name, b.name))[0];
+
+    const hit: PurifyDetection | undefined = this.state.currentSlideData
+      .map(imgData => imgData.json.output.detections.filter((detection) =>
+        MainComponent.distance(
+          MainComponent.purifyBoundingBoxToRectangle(detection.bounding_box), rScaledToBoundingBox) < tolerance)
+        // pick the most relevant detection in case we are hitting multiple of them
+        .sort((a, b) => this.sortByRelevance(a.name, b.name))[0])[0];
+
 
     if (hit) {
       // translate the zoom around the center of the detection
@@ -551,7 +473,7 @@ export class MainComponent extends Component<Props, State> {
       cursorPosition: clientCoordinates,
       cursorHint:
         this.state.pauseUntil < Date.now() && hit
-          ? this.detectionToZone(hit.name)
+          ? this.detectionToRegionType(hit.name)
           : undefined,
     });
   }
@@ -577,7 +499,23 @@ export class MainComponent extends Component<Props, State> {
     );
   }
 
-  private handleFileSelection(e: ChangeEvent<HTMLInputElement>) {
+  private static arrayBufferToJsonObject(data: ArrayBuffer): unknown {
+    var dataView = new DataView(data);
+    var decoder = new TextDecoder('utf8');
+    return JSON.parse(decoder.decode(dataView));
+  }
+
+
+  private static extractImageFilename(path: String): string {
+    if (path.startsWith('/')) {
+      return path.substring(path.lastIndexOf('/') + 1);
+    } else {
+      // assuming a windows path separator
+      return path.substring(path.lastIndexOf('\\') + 1);
+    }
+  }
+
+  private handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
     const nativeFiles: FileList = e.target.files;
     const allFiles = Array.from(nativeFiles);
     const imageFiles: File[] = allFiles.filter(
@@ -594,8 +532,8 @@ export class MainComponent extends Component<Props, State> {
     );
 
     const loadedJsons: Promise<{ [_: string]: PurifyMetadata }> = Promise.all(
-      jsonFiles.map((jf) =>
-        jf
+      jsonFiles.map((file) =>
+        file
           .arrayBuffer()
           .then(
             (data) =>
@@ -613,36 +551,48 @@ export class MainComponent extends Component<Props, State> {
       const imageFilesWithFaces = imageFiles.filter((file) =>
         jsons[file.name]?.output.detections.some(
           // image must have at least one zone to continue
-          (detection) => this.detectionToZone(detection.name) === 'NEXT'
+          (detection) => this.detectionToRegionType(detection.name) === 'FOCUS'
         )
       );
       this.setState({
-        imageFiles: imageFilesWithFaces,
+        slides: imageFilesWithFaces.map(f => ({images: [f]})),
         jsonFiles: jsons,
       });
     });
+  }
+
+  private createUtterance(text: String, voice: SpeechSynthesisVoice): SpeechSynthesisUtterance {
+    const utterance = new SpeechSynthesisUtterance('hi');
+    utterance.lang = 'en-US';
+    utterance.voice = voice;
+    utterance.onstart = () => this.ttsSpeaking$.next(true)
+    utterance.onend = () => this.ttsSpeaking$.next(false)
+    utterance.onresume = () => this.ttsSpeaking$.next(true)
+    utterance.onpause = () => this.ttsSpeaking$.next(false)
+    return utterance;
   }
 
   async startGame(): Promise<void> {
     if (
       this.state.mqtt.topics.renewRestraint?.name &&
       this.mqttClient?.connected
-    )
+    ) {
       this.sendMqtt(
         this.state.mqtt.topics.renewRestraint.name,
         this.state.mqtt.topics.renewRestraint.message,
         1
       );
+    }
 
     if (this.state.rules.shuffleGallery) {
-      let gallery = [...this.state.imageFiles];
+      let gallery = [...this.state.slides];
 
       for (let i = gallery.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [gallery[i], gallery[j]] = [gallery[j], gallery[i]];
       }
       this.setState({
-        imageFiles: gallery,
+        slides: gallery,
       });
     }
 
@@ -661,12 +611,24 @@ export class MainComponent extends Component<Props, State> {
       this.startButtplug();
     }
 
+    localStorage.setItem('tts', JSON.stringify(this.state.tts));
+    if (this.state.tts.use) {
+      const voice = window.speechSynthesis.getVoices().filter(v => v.localService)[0];
+
+      // TODO: start TTS
+      // window.speechSynthesis.speak(utterance);
+    }
+
     localStorage.setItem('coyote', JSON.stringify(this.state.coyote));
 
     localStorage.setItem('rules', JSON.stringify(this.state.rules));
 
-    this.setState({ phase: 'INGAME', pauseUntil: Date.now() + 1000 });
-    this.nextImage(false);
+    this.setState({phase: 'INGAME', pauseUntil: Date.now() + 1000});
+
+    if (this.state.rules.fullscreen) {
+      await document.getElementsByClassName('app')[0].requestFullscreen({navigationUI: 'hide'});
+    }
+    this.nextSlide(false);
   }
 
   render() {
@@ -677,8 +639,8 @@ export class MainComponent extends Component<Props, State> {
             <h5>
               Points: {this.state.stats.points}{' '}
               {this.state.rules.allowSkipImage &&
-              this.state.imageFiles.length > 0 ? (
-                <button onClick={() => this.nextImage(true)}>Skip Image</button>
+              this.state.slides.length > 0 ? (
+                <button onClick={() => this.nextSlide(true)}>Skip Image</button>
               ) : (
                 ''
               )}
@@ -688,896 +650,86 @@ export class MainComponent extends Component<Props, State> {
           ''
         )}
         <main>
+          <audio
+            src="assets/ding.mp3"
+            ref={this.audioDing}
+            autoPlay={false}
+            preload={this.state.rules.playSounds ? 'auto' : 'none'}
+          />
+          <audio
+            src="assets/beep-03.mp3"
+            ref={this.audioError}
+            autoPlay={false}
+            preload={this.state.rules.playSounds ? 'auto' : 'none'}
+          />
+
+          {this.state.phase === 'SETUP' ? (
+
+            <div className='flex'><ConfigMenu settings={this.state}
+                                              onSettingsChanged={(settings) => this.setState(settings)}
+                                              handleFileSelection={this.handlePurifyFileSelection}
+                                              onSelectCoyoteDeviceClicked={this.startCoyote}
+            /></div>) : ('')}
+
+
+          {this.state.slides.length > 0 && this.state.phase === 'SETUP' ? (
+            <button onClick={() => this.startGame()}>Start here ({this.state.slides.length} slides)!</button>
+          ) : (
+            ''
+          )}
+
 
           {this.state.phase === 'WON' ? (
-            <h1>You won! Your score: {this.state.stats.points}. Hit reload to start over.</h1>
+            <h1 className='won'>You made it! Your score: {this.state.stats.points}. Hit reload to start over.</h1>
           ) : this.state.phase === 'INGAME' ? (
             ''
           ) : (
             ''
           )}
 
-          {this.state.phase !== 'WON' ? (
+          {this.state.phase !== 'WON' ? ( // must be present in order to bind renderPane in ctor
 
-          <div className="flex">
+            <div className='renderContainer'>
+              <img
+                ref={this.renderPane}
+                src={this.state.currentSlideData[0]?.dataUrl}
+                data-imagename={this.state.currentSlideData[0]?.name}
+                onMouseMove={this.handleMouseMoveOnPane}
+                className={`${this.state.rules.softFilter} renderPane`}
+                style={{
+                  transitionDuration: `${this.state.rules.focusDuration}s`,
+                }}
+              />
+              <svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="0">
+                <defs>
+                  <filter id="pixelate" x="0" y="0">
+                    <feFlood x="8" y="8" height="4" width="4"/>
 
-            <img
-              id="renderPane"
-              ref={this.renderPane}
-              src={this.state.currentImageData}
-              data-imagename={this.state.currentImageName}
-              onMouseMove={this.handleMouseMoveOnPane}
-              className={this.state.rules.softFilter}
-              style={{
-                transitionDuration: `${this.state.transitionDuration}ms`,
-              }}
-            ></img>
-            <svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="0">
-              <defs>
-                <filter id="pixelate" x="0" y="0">
-                  <feFlood x="8" y="8" height="4" width="4" />
+                    <feComposite width="20" height="20"/>
 
-                  <feComposite width="20" height="20" />
+                    <feTile result="a"/>
 
-                  <feTile result="a" />
+                    <feComposite in="SourceGraphic" in2="a" operator="in"/>
 
-                  <feComposite in="SourceGraphic" in2="a" operator="in" />
-
-                  <feMorphology operator="dilate" radius="10" />
-                </filter>
-              </defs>
-            </svg>
-            <audio
-              src="assets/ding.mp3"
-              ref={this.audioDing}
-              autoPlay={false}
-              preload={this.state.rules.playSounds ? 'auto' : 'none'}
-            ></audio>
-            <audio
-              src="assets/beep-03.mp3"
-              ref={this.audioError}
-              autoPlay={false}
-              preload={this.state.rules.playSounds ? 'auto' : 'none'}
-            ></audio>
-
-            {this.state.rules.showGaze ? (
-              <Cursor
-                size={200}
-                position={this.state.cursorPosition}
-                hint={this.state.cursorHint}
-              ></Cursor>
-            ) : (
-              ''
-            )}
-          </div>
+                    <feMorphology operator="dilate" radius="10"/>
+                  </filter>
+                </defs>
+              </svg>
+            </div>
 
           ) : ('')}
 
-
-          {this.state.phase === 'SETUP' ? (
-            <div className="setupForms">
-              <details open>
-                <summary>Select local gallery</summary>
-                <p>
-                  This gallery uses the json metadata from the{' '}
-                  <a href="https://pury.fi/" target="_blank">
-                    pury.fi
-                  </a>{' '}
-                  NSFW model. To create a gallery, fetch the pury.fi offline tool{' '}
-                  <a href="https://discord.com/channels/347085342119297027/504704914568773670/629019675623424010">
-                    as described here
-                  </a>
-                  , start the detection for your images. Then select{' '}
-                  <em>Save JSON-Metadata</em> and run <em>Save Images</em>. Now
-                  copy all original images and all files from the{' '}
-                  <em>output/json</em> folder into a single directory and select
-                  it here.
-                </p>
-                <input
-                  ref={this.fileSelector}
-                  type="file"
-                  onChange={(e) => this.handleFileSelection(e)}
-                ></input>
-                <p>
-                  Suggestions/PRs for a public domain sample gallery are welcome!
-                  <button
-                    onClick={() =>
-                      loadDemoImages().then((dis) =>
-                        this.setState({ ...this.state, ...dis })
-                      )
-                    }
-                  >
-                    Load demo images
-                  </button>
-                </p>
-              </details>
-
-              <details open>
-                <summary>Rules</summary>
-                <ul>
-                  <li>
-                    Look into{' '}
-                    <select
-                      multiple={true}
-                      value={this.state.rules.focusRegions}
-                      onChange={(e) =>
-                        this.setState({
-                          rules: {
-                            ...this.state.rules,
-                            focusRegions: (Array.from(
-                              e.target.options
-                            ) as HTMLOptionElement[])
-                              .filter((i) => i.selected)
-                              .map((i) => i.value) as DetectionType[],
-                          },
-                        })
-                      }
-                    >
-                      <option value="FACE_FEMALE">female Face</option>
-                      <option value="FACE_MALE">male Face</option>
-                      <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
-                      <option value="FEET_COVERED">feet (covered)</option>
-                      <option value="FEET_EXPOSED">feet (exposed)</option>
-                      <option value="BELLY_EXPOSED">belly (exposed)</option>
-                      <option value="BELLY_COVERED">belly (covered)</option>
-                      <option value="ANUS_EXPOSED">anus (exposed)</option>
-                      <option value="ANUS_COVERED">anus (covered)</option>
-                      <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
-                      <option value="MALE_GENITALIA_EXPOSED">
-                        male genitalia (exposed)
-                      </option>
-                      <option value="MALE_GENITALIA_COVERED">
-                        male genitalia (covered)
-                      </option>
-                      <option value="MALE_BREAST_EXPOSED">
-                        male breast (exposed)
-                      </option>
-                      <option value="MALE_BREAST_COVERED">
-                        male breast (covered)
-                      </option>
-                      <option value="FEMALE_BREAST_EXPOSED">
-                        female breast (exposed)
-                      </option>
-                      <option value="FEMALE_BREAST_COVERED">
-                        female breast (covered)
-                      </option>
-                      <option value="FEMALE_GENITALIA_EXPOSED">
-                        female genitalia (exposed)
-                      </option>
-                      <option value="FEMALE_GENITALIA_COVERED">
-                        female genitalia (covered)
-                      </option>
-                    </select>{' '}
-                    for{' '}
-                    <input
-                      type="number"
-                      value={this.state.rules.focusDuration}
-                      min="1"
-                      max="20"
-                      onChange={(e) =>
-                        this.setState({
-                          rules: {
-                            ...this.state.rules,
-                            focusDuration: e.target.valueAsNumber,
-                          },
-                        })
-                      }
-                    ></input>{' '}
-                    seconds
-                  </li>
-                  <li>
-                    Do not stare at{' '}
-                    <select
-                      multiple={true}
-                      value={this.state.rules.softPunishRegions}
-                      onChange={(e) =>
-                        this.setState({
-                          rules: {
-                            ...this.state.rules,
-                            softPunishRegions: (Array.from(
-                              e.target.options
-                            ) as HTMLOptionElement[])
-                              .filter((i) => i.selected)
-                              .map((i) => i.value) as DetectionType[],
-                          },
-                        })
-                      }
-                    >
-                      <option value="FACE_FEMALE">female Face</option>
-                      <option value="FACE_MALE">male Face</option>
-                      <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
-                      <option value="FEET_COVERED">feet (covered)</option>
-                      <option value="FEET_EXPOSED">feet (exposed)</option>
-                      <option value="BELLY_EXPOSED">belly (exposed)</option>
-                      <option value="BELLY_COVERED">belly (covered)</option>
-                      <option value="ANUS_EXPOSED">anus (exposed)</option>
-                      <option value="ANUS_COVERED">anus (covered)</option>
-                      <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
-                      <option value="MALE_GENITALIA_EXPOSED">
-                        male genitalia (exposed)
-                      </option>
-                      <option value="MALE_GENITALIA_COVERED">
-                        male genitalia (covered)
-                      </option>
-                      <option value="MALE_BREAST_EXPOSED">
-                        male breast (exposed)
-                      </option>
-                      <option value="MALE_BREAST_COVERED">
-                        male breast (covered)
-                      </option>
-                      <option value="FEMALE_BREAST_EXPOSED">
-                        female breast (exposed)
-                      </option>
-                      <option value="FEMALE_BREAST_COVERED">
-                        female breast (covered)
-                      </option>
-                      <option value="FEMALE_GENITALIA_EXPOSED">
-                        female genitalia (exposed)
-                      </option>
-                      <option value="FEMALE_GENITALIA_COVERED">
-                        female genitalia (covered)
-                      </option>
-                    </select>{' '}
-                    !
-                  </li>
-                  <li>
-                    Especially do not stare at{' '}
-                    <select
-                      multiple={true}
-                      value={this.state.rules.hardPunishRegions}
-                      onChange={(e) =>
-                        this.setState({
-                          rules: {
-                            ...this.state.rules,
-                            hardPunishRegions: (Array.from(
-                              e.target.options
-                            ) as HTMLOptionElement[])
-                              .filter((i) => i.selected)
-                              .map((i) => i.value) as DetectionType[],
-                          },
-                        })
-                      }
-                    >
-                      <option value="FACE_FEMALE">female Face</option>
-                      <option value="FACE_MALE">male Face</option>
-                      <option value="ARMPITS_EXPOSED">armpits (exposed)</option>
-                      <option value="FEET_COVERED">feet (covered)</option>
-                      <option value="FEET_EXPOSED">feet (exposed)</option>
-                      <option value="BELLY_EXPOSED">belly (exposed)</option>
-                      <option value="BELLY_COVERED">belly (covered)</option>
-                      <option value="ANUS_EXPOSED">anus (exposed)</option>
-                      <option value="ANUS_COVERED">anus (covered)</option>
-                      <option value="BUTTOCKS_EXPOSED">buttocks (exposed)</option>
-                      <option value="MALE_GENITALIA_EXPOSED">
-                        male genitalia (exposed)
-                      </option>
-                      <option value="MALE_GENITALIA_COVERED">
-                        male genitalia (covered)
-                      </option>
-                      <option value="MALE_BREAST_EXPOSED">
-                        male breast (exposed)
-                      </option>
-                      <option value="MALE_BREAST_COVERED">
-                        male breast (covered)
-                      </option>
-                      <option value="FEMALE_BREAST_EXPOSED">
-                        female breast (exposed)
-                      </option>
-                      <option value="FEMALE_BREAST_COVERED">
-                        female breast (covered)
-                      </option>
-                      <option value="FEMALE_GENITALIA_EXPOSED">
-                        female genitalia (exposed)
-                      </option>
-                      <option value="FEMALE_GENITALIA_COVERED">
-                        female genitalia (covered)
-                      </option>
-                    </select>{' '}
-                    !
-                  </li>
-                  <li>Not following these rules will be punished.</li>
-                  <li>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={this.state.rules.showGaze}
-                        onChange={(e) =>
-                          this.setState({
-                            rules: {
-                              ...this.state.rules,
-                              showGaze: e.target.checked,
-                            },
-                          })
-                        }
-                      ></input>{' '}
-                      Gaze tracing
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={this.state.rules.allowSkipImage}
-                        onChange={(e) =>
-                          this.setState({
-                            rules: {
-                              ...this.state.rules,
-                              allowSkipImage: e.target.checked,
-                            },
-                          })
-                        }
-                      ></input>{' '}
-                      Allow skip image
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Visual Warning{' '}
-                      <select
-                        value={this.state.rules.softFilter}
-                        onChange={(e) =>
-                          this.setState({
-                            rules: {
-                              ...this.state.rules,
-                              softFilter: e.target.value as any,
-                            },
-                          })
-                        }
-                      >
-                        {' '}
-                        <option value="saturate">Saturate</option>
-                        <option value="pixelate">Pixelate</option>
-                      </select>
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={this.state.rules.playSounds}
-                        onChange={(e) =>
-                          this.setState({
-                            rules: {
-                              ...this.state.rules,
-                              playSounds: e.target.checked,
-                            },
-                          })
-                        }
-                      ></input>{' '}
-                      Play Sounds
-                    </label>
-                  </li>
-                  {document.fullscreenEnabled ? (
-                    <li>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={this.state.rules.fullscreen}
-                          onChange={(e) =>
-                            this.setState({
-                              rules: {
-                                ...this.state.rules,
-                                fullscreen: e.target.checked,
-                              },
-                            })
-                          }
-                        ></input>{' '}
-                        Fullscreen
-                      </label>
-                    </li>
-                  ) : (
-                    ''
-                  )}
-                  <li>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={this.state.rules.shuffleGallery}
-                        onChange={(e) =>
-                          this.setState({
-                            rules: {
-                              ...this.state.rules,
-                              shuffleGallery: e.target.checked,
-                            },
-                          })
-                        }
-                      ></input>{' '}
-                      Shuffle Gallery
-                    </label>
-                  </li>
-                </ul>
-                <button onClick={(e) => this.setState({ rules: defaultRules })}>
-                  Reset to defaults
-                </button>
-              </details>
-
-              <details>
-                <summary>Configure MQTT</summary>
-                <div className="form-group">
-                  <label>
-                    Use MQTT?
-                    <input
-                      type="checkbox"
-                      checked={this.state.mqtt.use}
-                      onChange={(e) =>
-                        this.setState({
-                          mqtt: { ...this.state.mqtt, use: e.target.checked },
-                        })
-                      }
-                    ></input>
-                  </label>
-                </div>
-                {this.state.mqtt.use ? (
-                  <div>
-                    <div className="form-group">
-                      <label>
-                        MQTT Server
-                        <input
-                          type="text"
-                          value={this.state.mqtt.server}
-                          onChange={(e) =>
-                            this.setState({
-                              mqtt: { ...this.state.mqtt, server: e.target.value },
-                            })
-                          }
-                        ></input>
-                      </label>
-                    </div>
-
-                    <div className="form-group">
-                      <label>
-                        Auth?
-                        <input
-                          type="checkbox"
-                          checked={this.state.mqtt.auth}
-                          onChange={(e) =>
-                            this.setState({
-                              mqtt: { ...this.state.mqtt, auth: e.target.checked },
-                            })
-                          }
-                        ></input>
-                      </label>
-                      {this.state.mqtt.auth ? (
-                        <div>
-                          <label>
-                            Username
-                            <input
-                              type="text"
-                              value={this.state.mqtt.username}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    username: e.target.value,
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                          <label>
-                            Password
-                            <input
-                              type="password"
-                              value={this.state.mqtt.password}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    password: e.target.value,
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </div>
-                      ) : (
-                        ''
-                      )}
-                    </div>
-
-                    <div className="form-group">
-                      <legend>Tease</legend>
-                      <ul>
-                        <li>
-                          <label>
-                            Topic
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.teaseTopic?.name}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      teaseTopic: {
-                                        ...(this.state.mqtt.topics.teaseTopic || {
-                                          name: '',
-                                          message: '',
-                                        }),
-                                        name: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Message
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.teaseTopic?.message}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      teaseTopic: {
-                                        ...this.state.mqtt.topics.teaseTopic,
-                                        message: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Stop Message (optional)
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.teaseTopic?.stopMessage}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      teaseTopic: {
-                                        ...this.state.mqtt.topics.teaseTopic,
-                                        stopMessage: e.target.value?.trim(),
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                      </ul>
-                    </div>
-                    <div className="form-group">
-                      <legend>Punishment</legend>
-                      <ul>
-                        <li>
-                          <label>
-                            Topic
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.punishTopic?.name}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      punishTopic: {
-                                        ...(this.state.mqtt.topics.punishTopic || {
-                                          name: '',
-                                          message: '',
-                                        }),
-                                        name: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Message
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.punishTopic?.message}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      punishTopic: {
-                                        ...this.state.mqtt.topics.punishTopic,
-                                        message: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Stop Message (optional)
-                            <input
-                              type="text"
-                              value={
-                                this.state.mqtt.topics.punishTopic?.stopMessage
-                              }
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      punishTopic: {
-                                        ...this.state.mqtt.topics.punishTopic,
-                                        stopMessage: e.target.value?.trim(),
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                      </ul>
-                    </div>
-                    <div className="form-group">
-                      <legend>Restraints</legend>
-                      <ul>
-                        <li>
-                          <label>
-                            Renew Restraints
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.renewRestraint?.name}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      renewRestraint: {
-                                        ...(this.state.mqtt.topics
-                                          .renewRestraint || {
-                                          name: '',
-                                          message: '',
-                                        }),
-                                        name: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Message (this is posted every 15 seconds until the game
-                            is won)
-                            <input
-                              type="text"
-                              value={this.state.mqtt.topics.renewRestraint?.message}
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      renewRestraint: {
-                                        ...this.state.mqtt.topics.renewRestraint,
-                                        message: e.target.value,
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                        <li>
-                          <label>
-                            Open Message (sent when the game is won)
-                            <input
-                              type="text"
-                              value={
-                                this.state.mqtt.topics.renewRestraint?.stopMessage
-                              }
-                              onChange={(e) =>
-                                this.setState({
-                                  mqtt: {
-                                    ...this.state.mqtt,
-                                    topics: {
-                                      ...this.state.mqtt.topics,
-                                      renewRestraint: {
-                                        ...this.state.mqtt.topics.renewRestraint,
-                                        stopMessage: e.target.value?.trim(),
-                                      },
-                                    },
-                                  },
-                                })
-                              }
-                            ></input>
-                          </label>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                ) : (
-                  ''
-                )}
-              </details>
-
-              <details>
-                <summary>Tobii EyeX</summary>
-                <p>
-                  You can try this gallery via mouse but it is intended to be used
-                  with a eye tracking devices. Currently the Tobii Eye 4C is
-                  supported using the
-                  <a
-                    href="https://github.com/rezreal/Tobii-EyeX-Web-Socket-Server/releases"
-                    target="_blank"
-                  >
-                    Tobii-EyeX-Web-Socket-Server
-                  </a>
-                  . As a preparation, install your Tobii Tracking software and
-                  launch the <em>TobiiSocketServer.exe</em>.
-                </p>
-                <div className="form-group">
-                  <label>
-                    Use Tobii?
-                    <input
-                      type="checkbox"
-                      checked={this.state.tobii.use}
-                      onChange={(e) =>
-                        this.setState({
-                          tobii: { ...this.state.tobii, use: e.target.checked },
-                        })
-                      }
-                    ></input>
-                  </label>
-                </div>
-                {this.state.tobii.use ? (
-                  <div className="form-group">
-                    <label>
-                      Disable mouse?
-                      <input
-                        type="checkbox"
-                        checked={this.state.tobii.disableMouse}
-                        onChange={(e) =>
-                          this.setState({
-                            tobii: {
-                              ...this.state.tobii,
-                              disableMouse: e.target.checked,
-                            },
-                          })
-                        }
-                      ></input>
-                    </label>
-                  </div>
-                ) : (
-                  ''
-                )}
-                {this.state.tobii.use ? (
-                  <div className="form-group">
-                    <label>
-                      Tobii Websocket Server
-                      <input
-                        type="text"
-                        value={this.state.tobii.server}
-                        onChange={(e) => {
-                          this.setState({
-                            tobii: {...this.state.tobii, server: e.target.value},
-                          });
-                        }}
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  ''
-                )}
-              </details>
-
-              <details>
-                <summary>DG-Labs Coyote</summary>
-                <p>
-                  Punishments and teasind should be real! Link your DG-Labs Coyote EStim device to feel real punishments.
-                  Make sure you run a web-bluetooth compatible browser (e.g. Chrome or Edge).
-                </p>
-                <div className="form-group">
-                  <label>
-                    Use Coyote?
-                    <input
-                      type="checkbox"
-                      checked={this.state.coyote.use}
-                      onChange={(e) =>
-                        this.setState({
-                          coyote: { ...this.state.coyote, use: e.target.checked },
-                        })
-                      }
-                    ></input>
-                  </label>
-                </div>
-                {this.state.coyote.use ? (
-                  <div className="form-group">
-                    <button disabled={!!this.coyoteDevice} onClick={(e => {this.startCoyote();})}>Select device</button>
-                    {this.coyoteDevice ? (
-                      <label>DeviceId: <input type="text" readOnly={true} value={this.coyoteDevice?.id}/></label>
-                    ) : ('')}
-                  </div>) : (
-                  ''
-                )}
-              </details>
-
-              <details>
-                <summary>Buttplug.io  (not yet implemented)</summary>
-                <p>
-                  You can pair this gallery with buttplug.io to control your toys.
-                </p>
-                <div className="form-group">
-                  <label>
-                    Use Buttplug?
-                    <input
-                      disabled={true}
-                      type="checkbox"
-                      checked={this.state.buttplug.use}
-                      onChange={(e) =>
-                        this.setState({
-                          buttplug: {
-                            ...this.state.buttplug,
-                            use: e.target.checked,
-                          },
-                        })
-                      }
-                    ></input>
-                  </label>
-                </div>
-                {this.state.buttplug.use ? (
-                  <div className="form-group">
-                    <label>
-                      Buttplug server
-                      <input
-                        type="text"
-                        value={this.state.buttplug.server}
-                        onChange={(e) => {
-                          this.setState({
-                            buttplug: {
-                              ...this.state.buttplug,
-                              server: e.target.value,
-                            },
-                          });
-                        }}
-                      ></input>
-                    </label>
-                  </div>
-                ) : (
-                  ''
-                )}
-              </details>
-
-            </div>
+          {this.state.rules.showGaze && this.state.phase == 'INGAME' ? (
+            <Cursor
+              size={200}
+              position={this.state.cursorPosition}
+              hint={this.state.cursorHint}
+            />
           ) : (
             ''
           )}
 
 
-
-
-          {this.state.imageFiles.length > 0 && this.state.phase === 'SETUP' ? (
-            <button onClick={() => this.startGame()}>Start here!</button>
-          ) : (
-            ''
-          )}
         </main>
       </div>
     );
