@@ -41,6 +41,7 @@ export interface Settings {
   readonly coyote: {
     readonly use: boolean;
     readonly pairedDeviceId?: string;
+    readonly powerLevel: number;
   },
 
   readonly rules: Rules;
@@ -74,6 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   coyote: {
     use: false,
+    powerLevel: 0,
     ...JSON.parse(localStorage.getItem('coyote') || '{}')
   },
 }

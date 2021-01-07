@@ -4,20 +4,23 @@ import {
   ReactNode, RefObject
 } from 'react';
 import React from 'react';
-import {defaultRules} from "./rules";
+import {defaultRules, RegionType} from "./rules";
 import {loadDemoImages} from "./demo";
 import {DetectionType} from "./purify";
 import {Settings} from "./settings";
 import './ConfigMenu.css';
 
 interface State {
+  files: { [P in RegionType]: readonly File[] };
 }
 
 interface Props {
   settings: Settings
   onSettingsChanged: (changed: Settings) => void
   handleFileSelection: (e: ChangeEvent<HTMLInputElement>) => void
+  handleAlternativeSelection: (files: { [P in RegionType]: readonly File[] }) => void
   onSelectCoyoteDeviceClicked: () => void
+  onForgetCoyoteDeviceClicked: () => void
 }
 
 export class ConfigMenu extends Component<Props, State> {
@@ -29,6 +32,7 @@ export class ConfigMenu extends Component<Props, State> {
 
   constructor(props) {
     super(props);
+    this.state = {files: { HARD_PUNISH:[], FOCUS: [], SOFT_PUNISH: [] }};
     this.fileSelector = React.createRef();
     this.goodImageSelector = React.createRef();
     this.badImageSelector = React.createRef();
@@ -71,7 +75,7 @@ export class ConfigMenu extends Component<Props, State> {
           <button
             onClick={() =>
               loadDemoImages().then((dis) =>
-                this.props.onSettingsChanged({...this.props.settings, ...this.props.settings, ...dis})
+                this.props.onSettingsChanged({...this.props.settings, ...dis})
               )
             }
           >
@@ -89,18 +93,19 @@ export class ConfigMenu extends Component<Props, State> {
           <label>Good images:<input
             ref={this.goodImageSelector}
             type="file"
-            onChange={(e) => this.props.handleFileSelection(e)}
+            onChange={(e) => this.setState( state => ({...state, files: {...state.files, FOCUS: Array.from(e.target.files) }}))}
           /></label><br/>
           <label>Bad images:<input
             ref={this.badImageSelector}
             type="file"
-            onChange={(e) => this.props.handleFileSelection(e)}
+            onChange={(e) => this.setState( state => ({...state, files: {...state.files, SOFT_PUNISH: Array.from(e.target.files) }}))}
           /></label><br/>
           <label>Forbidden images (harsh punishment):<input
             ref={this.punishImageSelector}
             type="file"
-            onChange={(e) => this.props.handleFileSelection(e)}
+            onChange={(e) => this.setState( state => ({...state, files: {...state.files, HARD_PUNISH: Array.from(e.target.files) }}))}
           /></label>
+          <button onClick={() => this.props.handleAlternativeSelection(this.state.files)}>Set Images</button>
 
         </fieldset>
       </details>
@@ -862,13 +867,32 @@ export class ConfigMenu extends Component<Props, State> {
         </div>
         {this.props.settings.coyote.use ? (
           <div className="form-group">
-            <button disabled={!!this.props.settings.coyote.pairedDeviceId} onClick={(e => {
-              this.props.onSelectCoyoteDeviceClicked();
-            })}>Select device
+            <button onClick={(e => this.props.onSelectCoyoteDeviceClicked())}>
+                {!this.props.settings.coyote.pairedDeviceId ? ("Select device") : ("Reconnect device") }
             </button>
             {this.props.settings.coyote.pairedDeviceId ? (
-              <label>DeviceId: <input type="text" readOnly={true}
+             <div>
+               <label>DeviceId: <input type="text" readOnly={true}
                                       value={this.props.settings.coyote.pairedDeviceId}/></label>
+                <button onClick={() => this.props.onForgetCoyoteDeviceClicked()}>Forget Device</button>
+                 <div className="form-group">
+                 <label>
+                   Power Level (Channel A)
+                   <input
+                     type="number"
+                     step="7"
+                     value={this.props.settings.coyote.powerLevel}
+                     onChange={(e) => {
+                       this.props.onSettingsChanged({
+                         ...this.props.settings,
+                         coyote: {...this.props.settings.coyote, powerLevel: e.target.valueAsNumber},
+                       });
+                     }}
+                   />
+                 </label>
+                </div>
+
+             </div>
             ) : ('')}
           </div>) : (
           ''

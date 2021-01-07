@@ -1,3 +1,4 @@
+import {WebBluetoothDevice} from "buttplug/dist/main/src/server/managers/webbluetooth/WebBluetoothDevice";
 
 const coyoteService = "955a180b-0fe2-f5aa-a094-84b8d4f3e8ad";
 
@@ -62,18 +63,18 @@ export function parsePattern(dataView: DataView): CoyotePattern {
     const ay = ((dataView.getUint16(0) & 0b0000000001111111)) << 3
         | ((dataView.getUint8(2) & 0b11100000) >>> 5);
     const ax = (dataView.getUint8(2) & 0b00011111);
-    return { dutyCycle: ax, pulseDuration: ay, amplitude: az };
+    return { pulseDuration: ax, pauseDuration: ay, amplitude: az };
 }
 
-function encodePattern({dutyCycle, pulseDuration, amplitude}: CoyotePattern): ArrayBuffer {
+function encodePattern({pulseDuration, pauseDuration, amplitude}: CoyotePattern): ArrayBuffer {
     const buffer = new ArrayBuffer(3);
     // flipFirstAndThirdByte(zero(4) ~ uint(5).as("az") ~ uint(10).as("ay") ~ uint(5).as("ax"))
     // 0000zzzz | zyyyyyyy | yyyxxxxx
     const view = new DataView(buffer);
     view.setUint8(0, ((amplitude & 0b00011110) >>> 1));
     view.setUint16(1, ((amplitude & 0b00000001) << 15)
-        | ((pulseDuration & 0b0000001111111111) << 5)
-        | (dutyCycle & 0b00011111));
+        | ((pauseDuration & 0b0000001111111111) << 5)
+        | (pulseDuration & 0b00011111));
 
     flipFirstAndThirdByte(buffer);
     return buffer;
@@ -86,9 +87,9 @@ export interface CoyotePower {
 
 export interface CoyotePattern {
     /** Duty Cycle (spiky) 0..32 (smooth) */
-    dutyCycle: number;
-    /** LFO pulse duration in milliseconds 0..1024 */
     pulseDuration: number;
+    /** LFO pulse duration in milliseconds 0..1024 */
+    pauseDuration: number;
     /** Amplitude, 0..32 */
     amplitude: number;
 }
@@ -104,10 +105,8 @@ export interface CoyoteState {
 
 export interface CoyoteDevice {
     writePower(power: CoyotePower): Promise<void>;
-
-    writePatternA(power: CoyotePattern): Promise<void>;
-
-    writePatternB(power: CoyotePattern): Promise<void>;
+    writePatternA(power: CoyotePattern, duration: number): Promise<void>;
+    writePatternB(power: CoyotePattern, duration: number): Promise<void>;
 
     stop(): Promise<void>;
 
@@ -118,17 +117,24 @@ export interface CoyoteDevice {
  * Must be triggered via user intent.
  */
 export async function pairDevice(batteryChangeCallback?: (batteryLevel: number) => void,
-                                 powerChangedCallback?: (power: CoyotePower) => void)
+                                 powerChangedCallback?: (power: CoyotePower) => void,
+                                 previousDeviceId?: string)
     : Promise<[CoyoteState, CoyoteDevice]> {
 
   const filters = [{
     namePrefix: "D-LAB",
   }];
 
-  const device = await ((navigator as any).bluetooth as Bluetooth).requestDevice({
-        filters: filters,
-        optionalServices: [coyoteService, batteryService],
-    });
+
+  const previousDevices: BluetoothDevice[] | undefined = await (navigator as any).bluetooth?.getDevices();
+  const previousDevice:BluetoothDevice | undefined = previousDevices.find(d => d.id === previousDeviceId);
+  const device = previousDevice || await ((navigator as any).bluetooth as Bluetooth).requestDevice({
+
+      filters: filters,
+      optionalServices: [coyoteService, batteryService],
+    })
+
+
     console.log("Connecting to GATT Server...");
     const server = await device.gatt!.connect();
 
@@ -165,6 +171,9 @@ export async function pairDevice(batteryChangeCallback?: (batteryLevel: number) 
     let patternA = parsePattern(await patternACharacteristic.readValue());
     let patternB = parsePattern(await patternBCharacteristic.readValue());
 
+    let untilA: number = -1;
+    let untilB: number = -1;
+
     console.log("Getting Battery Service...");
     const battery = await server.getPrimaryService(batteryService);
 
@@ -187,8 +196,14 @@ export async function pairDevice(batteryChangeCallback?: (batteryLevel: number) 
             return;
         }
         timerHandle = window.setInterval(async () => {
-            await patternACharacteristic.writeValue(encodePattern(patternA));
-            await patternBCharacteristic.writeValue(encodePattern(patternB));
+            if (untilA > Date.now()) {
+              await patternACharacteristic.writeValue(encodePattern(patternA));
+            }
+            if (untilB > Date.now()) {
+              await patternACharacteristic.writeValue(encodePattern(patternB));
+            }
+
+            //await patternBCharacteristic.writeValue(encodePattern(patternB));
         }, 40);
     }
 
@@ -197,18 +212,21 @@ export async function pairDevice(batteryChangeCallback?: (batteryLevel: number) 
         timerHandle = undefined;
     }
 
+
     return [{maxPower, power, powerStep, patternA, patternB, batteryLevel}, {
         id: device.id,
         writePower(powerLevels: CoyotePower): Promise<void> {
             return powerCharacteristic.writeValue(encodePower(powerLevels));
         },
-        writePatternA(pattern: CoyotePattern): Promise<void> {
+        writePatternA(pattern: CoyotePattern, duration: number): Promise<void> {
             patternA = pattern;
+            untilA = Date.now() + duration
             startTimer();
             return Promise.resolve();
         },
-        writePatternB(pattern: CoyotePattern): Promise<void> {
+        writePatternB(pattern: CoyotePattern, duration: number): Promise<void> {
             patternB = pattern;
+            untilB = Date.now() + duration
             startTimer();
             return Promise.resolve();
         },

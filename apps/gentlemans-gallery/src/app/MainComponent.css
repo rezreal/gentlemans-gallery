@@ -8,7 +8,12 @@
 }
 
 div.renderContainer {
-
+  position: absolute;
+  /*top: 50%;
+  left: 50%;
+  margin-right: -50%;
+  transform: translate(-50%, -50%);
+  z-index: 998;*/
 }
 
 .renderPane {
@@ -17,12 +22,7 @@ div.renderContainer {
   /*transition: transform 0.2s ease-out; /* Animation */
   transition: filter 0.1s;
   border-radius: 0px;
-  z-index: 998;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  margin-right: -50%;
-  transform: translate(-50%, -50%)
+
 }
 
 .renderPane.fadein{

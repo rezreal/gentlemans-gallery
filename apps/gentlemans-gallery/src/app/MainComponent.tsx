@@ -20,8 +20,16 @@ import {CoyoteDevice, pairDevice} from "./Coyote";
 import {ConfigMenu} from "./ConfigMenu";
 import {DEFAULT_SETTINGS, Settings} from "./settings";
 import {RegionType} from "./rules";
+import {censorImage} from "./censorImage";
 
 interface Props {
+}
+
+interface SlideData {
+  readonly dataUrl: string;
+  readonly dataUrlCensored: string;
+  readonly name: string;
+  readonly json: PurifyMetadata;
 }
 
 interface State extends Settings {
@@ -30,11 +38,7 @@ interface State extends Settings {
 
   readonly jsonFiles: { [_: string]: PurifyMetadata };
   readonly currentSlide: number;
-  readonly currentSlideData: {
-    readonly dataUrl: string;
-    readonly name: string;
-    readonly json: PurifyMetadata;
-  }[];
+  readonly currentSlideData: SlideData[];
 
   readonly cursorPosition: { x: number; y: number };
   readonly cursorHint?: RegionType;
@@ -64,7 +68,8 @@ export class MainComponent extends Component<Props, State> {
   constructor(props) {
     super(props);
     this.state = DEFAULT_STATE;
-    this.startCoyote = this.startCoyote.bind(this)
+    this.startCoyote = this.startCoyote.bind(this);
+    this.forgetCoyote = this.forgetCoyote.bind(this);
     this.handlePurifyFileSelection = this.handlePurifyFileSelection.bind(this);
     this.nextSlide = this.nextSlide.bind(this);
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
@@ -88,12 +93,21 @@ export class MainComponent extends Component<Props, State> {
 
   mqttClient: any | undefined;
 
+  private forgetCoyote() {
+    this.setState((prev) => ({...prev, coyote: {...prev.coyote, pairedDeviceId: undefined}}))
+  }
+
   private async startCoyote(): Promise<void> {
     const [coyoteState, coyoteDevice] = await pairDevice((level) => {
         console.info(`Coyote at battery-level ${level}`)
+
       },
-      (power) => console.info(`Coyote at power-level ${power})`))
+      ({powerA, powerB}) => console.info(`Coyote at power-level a:${powerA} ${powerB})`),
+      this.state.coyote.pairedDeviceId)
+    this.setState(prev => ({...prev, coyote: {...prev.coyote, pairedDeviceId: coyoteDevice.id}}))
     this.coyoteDevice = coyoteDevice;
+    this.coyoteDevice.writePower({powerA: this.state.coyote.powerLevel, powerB: 7});
+
   }
 
   private startTobii(): void {
@@ -235,37 +249,36 @@ export class MainComponent extends Component<Props, State> {
         throttle(
           () => {
             const delayUntil = Math.max(0, this.state.pauseUntil - Date.now());
-            return of(false).pipe(delay(delayUntil));
+            return of().pipe(delay(delayUntil));
           },
           {leading: true, trailing: true}
         ),
         map((z) => this.detectionToRegionType(z)),
         tap((regionType) => {
-          this.renderPane.current.dataset.region = null;
-          if (regionType === 'FOCUS') {
-            void this.renderPane.current.offsetWidth;
-            this.renderPane.current.dataset.region = 'FOCUS';
-            if (this.state.mqtt.topics.teaseTopic) {
-              this.sendMqtt(
-                this.state.mqtt.topics.teaseTopic.name,
-                this.state.mqtt.topics.teaseTopic.message
-              );
-            }
-          } else if (regionType === undefined) {
-            if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
-              this.sendMqtt(
-                this.state.mqtt.topics.teaseTopic.name,
-                this.state.mqtt.topics.teaseTopic.stopMessage,
-                1
-              );
-            }
-          }
-          if (regionType === 'HARD_PUNISH') {
-            void this.renderPane.current.offsetWidth;
-            this.renderPane.current.dataset.region = 'HARD_PUNISH';
-          }
-          if (regionType === 'SOFT_PUNISH') {
-            this.renderPane.current.dataset.region = 'SOFT_PUNISH';
+          void this.renderPane?.current?.offsetWidth;
+          switch (regionType) {
+            case 'FOCUS':
+              this.renderPane.current.dataset.region = 'FOCUS';
+              if (this.state.mqtt.topics.teaseTopic) {
+                this.sendMqtt(
+                  this.state.mqtt.topics.teaseTopic.name,
+                  this.state.mqtt.topics.teaseTopic.message
+                );
+              }
+              this.teaseShock();
+              break;
+            case 'HARD_PUNISH':
+              this.renderPane.current.dataset.region = 'HARD_PUNISH';
+              this.punishShock();
+              break;
+            case 'SOFT_PUNISH':
+              this.renderPane.current.dataset.region = 'SOFT_PUNISH';
+              this.punishShock();
+              break;
+            default:
+              if (this.renderPane.current) {
+                this.renderPane.current.dataset.region = null;
+              }
           }
 
         }),
@@ -275,7 +288,9 @@ export class MainComponent extends Component<Props, State> {
           )
         ),
         tap((regionType) => {
-          this.renderPane.current.dataset.region = null;
+          if (this.renderPane.current) {
+            this.renderPane.current.dataset.region = null;
+          }
         }),
         // not entirely sure why this is needed, avoids double submits
         throttleTime(100)
@@ -301,6 +316,14 @@ export class MainComponent extends Component<Props, State> {
             this.punish(regionType);
         }
       });
+  }
+
+  teaseShock() {
+    this.coyoteDevice?.writePatternA({amplitude: 8, pulseDuration: 20, pauseDuration: 20}, 1000);
+  }
+
+  punishShock() {
+    this.coyoteDevice?.writePatternA({amplitude: 30, pulseDuration: 12, pauseDuration: 150}, 200);
   }
 
   componentWillUnmount() {
@@ -338,7 +361,7 @@ export class MainComponent extends Component<Props, State> {
     ).length;
   }
 
-  private punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
+  private async punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
     if (this.state.mqtt.topics.punishTopic) {
       this.sendMqtt(
         this.state.mqtt.topics.punishTopic.name,
@@ -358,7 +381,7 @@ export class MainComponent extends Component<Props, State> {
           failures: this.state.stats.failures + 1,
         },
         currentSlide: nextSlideIndex,
-        currentSlideData: this.loadSlide(nextSlideIndex),
+        currentSlideData: await this.loadSlide(nextSlideIndex),
       });
       this.setState({pauseUntil: Date.now() + 1500});
     } else if (level === 'SOFT_PUNISH') {
@@ -369,16 +392,24 @@ export class MainComponent extends Component<Props, State> {
     }
   }
 
-  private loadSlide(index:number) {
-    const images = this.state.slides[index ].images;
-    return images.map(imgFile => ({
-      name: imgFile.name,
-      json: this.state.jsonFiles[imgFile.name],
-      dataUrl: window.URL.createObjectURL(imgFile),
-    }));
+  private async loadSlide(index:number): Promise<SlideData[]> {
+    const images = this.state.slides[index].images;
+
+    return await Promise.all(images.map( imgFile =>
+      censorImage(imgFile, this.state.jsonFiles[imgFile.name],
+        (region) => this.state.rules.regionMapping["HARD_PUNISH"].includes(region) || this.state.rules.regionMapping["SOFT_PUNISH"].includes(region) )
+        .then(censored =>
+        ({
+          name: imgFile.name,
+          json: this.state.jsonFiles[imgFile.name],
+          dataUrl: window.URL.createObjectURL(imgFile),
+          dataUrlCensored: censored
+        }))
+    ))
   }
 
-  private nextSlide(skipped: boolean) {
+
+  private async nextSlide(skipped: boolean) {
     const nextSlideIndex = this.state.currentSlide + 1;
 
     if (nextSlideIndex >= this.state.slides.length) {
@@ -403,11 +434,11 @@ export class MainComponent extends Component<Props, State> {
         points: this.state.stats.points + (skipped ? -10 : 20),
       },
       currentSlide: nextSlideIndex,
-      currentSlideData: this.loadSlide(nextSlideIndex)
+      currentSlideData: await this.loadSlide(nextSlideIndex)
     });
-    this.renderPane.current.classList.remove('fadein');
-    void this.renderPane.current.offsetWidth;
-    this.renderPane.current.classList.add('fadein');
+    this.renderPane.current?.classList.remove('fadein');
+    void this.renderPane.current?.offsetWidth;
+    this.renderPane.current?.classList.add('fadein');
     this.setState({pauseUntil: Date.now() + 1000});
   }
 
@@ -500,8 +531,8 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private static arrayBufferToJsonObject(data: ArrayBuffer): unknown {
-    var dataView = new DataView(data);
-    var decoder = new TextDecoder('utf8');
+    const dataView = new DataView(data);
+    const decoder = new TextDecoder('utf8');
     return JSON.parse(decoder.decode(dataView));
   }
 
@@ -515,15 +546,40 @@ export class MainComponent extends Component<Props, State> {
     }
   }
 
+  private static isImage(f:File): boolean {
+    return  f.type === 'image/jpeg' ||
+      f.type === 'image/png' ||
+      f.type === 'image/webp';
+  }
+
+  private handleAlternativePurifyFileSelection(files: { [P in RegionType]: readonly File[] }) {
+
+    const imageFiles = {
+      FOCUS: files.FOCUS.filter(MainComponent.isImage),
+      SOFT_PUNISH: files.SOFT_PUNISH.filter(MainComponent.isImage),
+      HARD_PUNISH: files.HARD_PUNISH.filter(MainComponent.isImage)
+    }
+
+    const focusJsons = imageFiles.FOCUS.map(image => ({
+      output: {
+        "nsfw_score": 0.999,
+        detections: [
+          {
+            "bounding_box": [0,0, ],
+            "confidence": 1,
+            "name": "ARMPITS_EXPOSED"
+          }
+        ]
+      },
+      file: image.name
+    }));
+
+  }
+
   private handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
     const nativeFiles: FileList = e.target.files;
     const allFiles = Array.from(nativeFiles);
-    const imageFiles: File[] = allFiles.filter(
-      (f) =>
-        f.type === 'image/jpeg' ||
-        f.type === 'image/png' ||
-        f.type === 'image/webp'
-    );
+    const imageFiles: File[] = allFiles.filter(MainComponent.isImage);
     // sort them by name
     imageFiles.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -548,14 +604,14 @@ export class MainComponent extends Component<Props, State> {
     );
 
     loadedJsons.then((jsons) => {
-      const imageFilesWithFaces = imageFiles.filter((file) =>
+      const imageFilesWithFocusRegions = imageFiles.filter((file) =>
         jsons[file.name]?.output.detections.some(
           // image must have at least one zone to continue
           (detection) => this.detectionToRegionType(detection.name) === 'FOCUS'
         )
       );
       this.setState({
-        slides: imageFilesWithFaces.map(f => ({images: [f]})),
+        slides: imageFilesWithFocusRegions.map(f => ({images: [f]})),
         jsonFiles: jsons,
       });
     });
@@ -666,9 +722,11 @@ export class MainComponent extends Component<Props, State> {
           {this.state.phase === 'SETUP' ? (
 
             <div className='flex'><ConfigMenu settings={this.state}
-                                              onSettingsChanged={(settings) => this.setState(settings)}
+                                              onSettingsChanged={(settings) => {console.log(settings); this.setState(settings)}}
                                               handleFileSelection={this.handlePurifyFileSelection}
                                               onSelectCoyoteDeviceClicked={this.startCoyote}
+                                              onForgetCoyoteDeviceClicked={this.forgetCoyote}
+                                              handleAlternativeSelection={this.handleAlternativePurifyFileSelection}
             /></div>) : ('')}
 
 
@@ -690,34 +748,28 @@ export class MainComponent extends Component<Props, State> {
           {this.state.phase !== 'WON' ? ( // must be present in order to bind renderPane in ctor
 
             <div className='renderContainer'>
-              <img
-                ref={this.renderPane}
-                src={this.state.currentSlideData[0]?.dataUrl}
-                data-imagename={this.state.currentSlideData[0]?.name}
-                onMouseMove={this.handleMouseMoveOnPane}
-                className={`${this.state.rules.softFilter} renderPane`}
-                style={{
-                  transitionDuration: `${this.state.rules.focusDuration}s`,
-                }}
-              />
-              <svg xmlns="http://www.w3.org/2000/svg" version="1.1" height="0">
-                <defs>
-                  <filter id="pixelate" x="0" y="0">
-                    <feFlood x="8" y="8" height="4" width="4"/>
+              {this.state.currentSlideData.map((slideData, index) =>
 
-                    <feComposite width="20" height="20"/>
+                <div key={`${slideData.name}${index}`}>
+                  <img
+                    ref={this.renderPane}
+                    key={`${slideData.name}${index}`}
+                    src={slideData.dataUrlCensored}
+                    data-imagename={slideData.name}
+                    onMouseMove={this.handleMouseMoveOnPane}
+                    className={`${this.state.rules.softFilter} renderPane`}
+                    style={{
+                      transitionDuration: `${this.state.rules.focusDuration}s`,
+                    }}
+                  />
 
-                    <feTile result="a"/>
+                </div>
 
-                    <feComposite in="SourceGraphic" in2="a" operator="in"/>
-
-                    <feMorphology operator="dilate" radius="10"/>
-                  </filter>
-                </defs>
-              </svg>
+            )}
             </div>
 
-          ) : ('')}
+
+          ) : []}
 
           {this.state.rules.showGaze && this.state.phase == 'INGAME' ? (
             <Cursor

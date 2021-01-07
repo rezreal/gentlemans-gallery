@@ -19,5 +19,5 @@ export interface PurifyMetadata {
     readonly detections: readonly PurifyDetection[]
   }
   readonly file: string
-};
+}
 

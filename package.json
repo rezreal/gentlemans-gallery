@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "nx": "nx",
-    "start": "nx serve",
+    "start": "nx serve --host 0.0.0.0 --ssl true",
     "build": "nx build",
     "test": "nx test",
     "lint": "nx workspace-lint && nx lint",
@@ -31,8 +31,8 @@
     "core-js": "^3.6.5",
     "document-register-element": "1.13.1",
     "process": "^0.11.10",
-    "react": "16.12.0",
-    "react-dom": "16.12.0",
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1",
     "rxjs": "^6.5.5"
   },
   "devDependencies": {
