@@ -15,18 +15,20 @@ import {
 } from 'react';
 
 import * as React from 'react';
-import { Subject, BehaviorSubject, of, interval } from 'rxjs';
 import {
+  Subject,
+  BehaviorSubject,
+  interval,
   takeUntil,
   distinctUntilChanged,
-  switchMap,
-  tap,
-  delay,
   throttle,
+  of,
+  delay,
   map,
-  filter,
-  throttleTime,
-} from 'rxjs/operators';
+  tap,
+  switchMap, throttleTime
+} from 'rxjs';
+
 import { Cursor } from './Cursor';
 import './MainComponent.css';
 import { CoyoteDevice, pairDevice } from './Coyote';
@@ -36,10 +38,10 @@ import { RegionType } from './rules';
 import { censorImage, loadImage, readAsDataUrl } from './censorImage';
 import * as tf from '@tensorflow/tfjs';
 import { XToysClient } from './xtoys';
-import { MqttClient } from './MqttClient';
+
 import { ProtocolFrame } from './TobiiClient';
 
-interface Props {}
+type Props = Record<string, never>
 
 interface SlideData {
   readonly dataUrl: string;
@@ -89,7 +91,7 @@ export class MainComponent extends Component<Props, State> {
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
     this.renderPane = createRef();
     this.audioDing = createRef();
-    this.audioError = createRef();
+    this.audioMistake = createRef();
   }
 
   gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject<DetectionType | undefined>(
@@ -97,7 +99,6 @@ export class MainComponent extends Component<Props, State> {
   );
   eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
   presence$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
-  ttsSpeaking$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
   destroy$: Subject<unknown> = new Subject<unknown>();
 
   slideChanges$: BehaviorSubject<readonly string[] | undefined> =
@@ -108,8 +109,6 @@ export class MainComponent extends Component<Props, State> {
   coyoteDevice: CoyoteDevice | undefined;
   tobiiScreenWidth: number = window.screen.width;
   tobiiScreenHeight: number = window.screen.height;
-
-  mqttClient?: MqttClient;
 
   private forgetCoyote() {
     this.setState((prev) => ({
@@ -198,26 +197,7 @@ export class MainComponent extends Component<Props, State> {
   }
 
   componentDidMount(): void {
-    interval(15000)
-      .pipe(
-        takeUntil(this.destroy$),
-        filter(() => !!this.mqttClient && this.state.phase === 'INGAME')
-      )
-      .subscribe(() => {
-        if (
-          this.state.mqtt.topics.renewRestraint &&
-          this.state.mqtt.topics.renewRestraint.name &&
-          this.state.mqtt.topics.renewRestraint.message
-        ) {
-          this.mqttClient!.sendMqtt(
-            this.state.mqtt.topics.renewRestraint.name,
-            this.state.mqtt.topics.renewRestraint.message,
-            1
-          );
-        }
-      });
-
-    this.gazeHits$
+     this.gazeHits$
       .pipe(
         takeUntil(this.destroy$),
         distinctUntilChanged(),
@@ -246,12 +226,6 @@ export class MainComponent extends Component<Props, State> {
           switch (regionType) {
             case 'FOCUS':
               this.renderPane.current!.dataset.region = 'FOCUS';
-              if (this.mqttClient && this.state.mqtt.topics.teaseTopic) {
-                this.mqttClient.sendMqtt(
-                  this.state.mqtt.topics.teaseTopic.name,
-                  this.state.mqtt.topics.teaseTopic.message
-                );
-              }
               this.teaseShock();
               break;
             case 'HARD_PUNISH':
@@ -291,13 +265,10 @@ export class MainComponent extends Component<Props, State> {
         switch (regionType) {
           case 'FOCUS':
             if (this.state.rules.playSounds) {
-              this.audioDing.current?.play();
-            }
-            if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
-              this.mqttClient?.sendMqtt(
-                this.state.mqtt.topics.teaseTopic.name,
-                this.state.mqtt.topics.teaseTopic?.stopMessage!
-              );
+              if (this.audioDing.current) {
+                this.audioDing.current.currentTime = 0;
+                this.audioDing.current.play();
+              }
             }
 
             this.nextSlide(false);
@@ -331,11 +302,13 @@ export class MainComponent extends Component<Props, State> {
     if (this.tobiiWs) {
       this.tobiiWs.close();
     }
+
+    this.xtoys?.stop();
   }
 
   private readonly renderPane: RefObject<HTMLImageElement>;
   private readonly audioDing: RefObject<HTMLAudioElement>;
-  private readonly audioError: RefObject<HTMLAudioElement>;
+  private readonly audioMistake: RefObject<HTMLAudioElement>;
 
   private detectionToRegionType(name: DetectionType): RegionType | undefined {
     if (this.state.rules.regionMapping.FOCUS.some((e) => e === name)) {
@@ -359,14 +332,13 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private async punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
-    if (this.state.mqtt.topics.punishTopic) {
-      this.mqttClient?.sendMqtt(
-        this.state.mqtt.topics.punishTopic.name,
-        this.state.mqtt.topics.punishTopic.message
-      );
+
+    if (this.state.xtoys.use) {
+      this.xtoys?.sendXToys({type: "punish", severity: level === 'SOFT_PUNISH' ? 'soft' : 'hard'});
     }
+
     if (this.state.rules.playSounds) {
-      this.audioError.current?.play();
+      this.audioMistake.current?.play();
     }
     if (level === 'HARD_PUNISH') {
       const nextSlideIndex = Math.max(0, this.state.currentSlide - 1);
@@ -390,7 +362,10 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private async loadSlide(index: number): Promise<SlideData[]> {
-    const m = this.model!; // TODO: fail if model is not loaded
+    if (!this.model) {
+      throw new Error("model not loaded");
+    }
+    const m = this.model; // TODO: fail if model is not loaded
     const rules = this.state.rules;
 
     const images = this.state.slides[index].images;
@@ -398,9 +373,9 @@ export class MainComponent extends Component<Props, State> {
     async function imgToSlideData(img: File): Promise<SlideData> {
       const htmlImage = await loadImage(await readAsDataUrl(img));
 
-      let detections = await processImage(m, htmlImage);
+      const detections = await processImage(m, htmlImage);
 
-      let censored = censorImage(
+      const censored = censorImage(
         htmlImage,
         detections,
         (region) =>
@@ -421,23 +396,20 @@ export class MainComponent extends Component<Props, State> {
     return Promise.all(images.map(imgToSlideData));
   }
 
+  private async win(): Promise<void> {
+    this.setState(() => ({ phase: 'WON' }));
+
+    this.xtoys?.sendXToys({ "type": "won"});
+
+    await document.exitFullscreen();
+
+  }
+
   private async nextSlide(skipped: boolean) {
     const nextSlideIndex = this.state.currentSlide + 1;
 
     if (nextSlideIndex >= this.state.slides.length) {
-      this.setState(() => ({ phase: 'WON' }));
-
-      if (
-        this.state.mqtt.topics.renewRestraint?.name &&
-        this.state.mqtt.topics.renewRestraint?.stopMessage
-      ) {
-        this.mqttClient?.sendMqtt(
-          this.state.mqtt.topics.renewRestraint?.name!,
-          this.state.mqtt.topics.renewRestraint?.stopMessage!,
-          1
-        );
-      }
-      await document.exitFullscreen();
+      await this.win();
       return;
     }
 
@@ -515,7 +487,7 @@ export class MainComponent extends Component<Props, State> {
             // pick the most relevant detection in case we are hitting multiple of them
             .sort((a, b) => this.sortByRelevance(a.name, b.name))[0],
         }))
-        .filter((d) => d.detection!!)[0];
+        .filter((d) => !!d.detection)[0];
 
     if (hit) {
       // translate the zoom around the center of the detection
@@ -528,9 +500,7 @@ export class MainComponent extends Component<Props, State> {
         x: hitRect.x + hitRect.width / 2,
         y: hitRect.y + hitRect.height / 2,
       };
-      (
-        renderPane.style as any
-      ).transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
+      renderPane.style.transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
     }
 
     this.gazeHits$.next(hit?.detection.name);
@@ -623,34 +593,11 @@ export class MainComponent extends Component<Props, State> {
     );
   }
 
-  private createUtterance(
-    text: String,
-    voice: SpeechSynthesisVoice
-  ): SpeechSynthesisUtterance {
-    const utterance = new SpeechSynthesisUtterance('hi');
-    utterance.lang = 'en-US';
-    utterance.voice = voice;
-    utterance.onstart = () => this.ttsSpeaking$.next(true);
-    utterance.onend = () => this.ttsSpeaking$.next(false);
-    utterance.onresume = () => this.ttsSpeaking$.next(true);
-    utterance.onpause = () => this.ttsSpeaking$.next(false);
-    return utterance;
-  }
 
   async startGame(): Promise<void> {
-    if (
-      this.state.mqtt.topics.renewRestraint?.name &&
-      this.state.mqtt.topics.renewRestraint?.message
-    ) {
-      this.mqttClient?.sendMqtt(
-        this.state.mqtt.topics.renewRestraint?.name!,
-        this.state.mqtt.topics.renewRestraint?.message!,
-        1
-      );
-    }
 
     if (this.state.rules.shuffleGallery) {
-      let gallery = [...this.state.slides];
+      const gallery = [...this.state.slides];
 
       for (let i = gallery.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -671,15 +618,7 @@ export class MainComponent extends Component<Props, State> {
       if (!this.xtoys) {
         this.xtoys = new XToysClient(this.state.xtoys);
       }
-      this.xtoys.startXToys();
-    }
-
-    localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
-    if (this.state.mqtt.use) {
-      if (!this.mqttClient) {
-        this.mqttClient = new MqttClient(this.state.mqtt);
-      }
-      this.mqttClient.startMqtt();
+      this.xtoys.start();
     }
 
     localStorage.setItem('tts', JSON.stringify(this.state.tts));
@@ -711,7 +650,7 @@ export class MainComponent extends Component<Props, State> {
     await this.nextSlide(false);
   }
 
-  render() {
+  render(): JSX.Element {
     return (
       <div className="app">
         {this.state.phase === 'INGAME' ? (
@@ -738,7 +677,7 @@ export class MainComponent extends Component<Props, State> {
           />
           <audio
             src="assets/beep-03.mp3"
-            ref={this.audioError}
+            ref={this.audioMistake}
             autoPlay={false}
             preload={this.state.rules.playSounds ? 'auto' : 'none'}
           />
@@ -789,6 +728,7 @@ export class MainComponent extends Component<Props, State> {
                   <img
                     ref={this.renderPane}
                     key={`${slideData.name}${index}`}
+                    alt="Current Slide"
                     src={slideData.dataUrlCensored}
                     data-imagename={slideData.name}
                     draggable={false}

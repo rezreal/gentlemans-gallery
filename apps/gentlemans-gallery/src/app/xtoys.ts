@@ -7,13 +7,17 @@ export interface XToysConfig {
   readonly token: string;
 }
 
-export type XToysCommand = {};
+export type XToysCommand = unknown;
 
-export type XToysEvent = LookAt | Punish;
+export type XToysEvent = LookAt | Punish |Won;
 
 export interface Punish {
   type: 'punish';
   severity: 'hard' | 'soft';
+}
+
+export interface Won {
+  type: 'won';
 }
 
 export interface LookAt {
@@ -30,7 +34,11 @@ export class XToysClient {
     this.ws?.send(JSON.stringify(evt));
   }
 
-  public startXToys(): void {
+  public stop() {
+    this.ws?.close(1001, "Going Away")
+  }
+
+  public start(): void {
     this.ws = new WebSocket(
       `wss://webhook.xtoys.app/${this.config.websocket}?token=${this.config.token}`
     );

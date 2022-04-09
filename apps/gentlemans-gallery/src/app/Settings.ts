@@ -1,5 +1,5 @@
 import {defaultRules, Rules} from './rules';
-import {MqttSettings} from './MqttClient';
+
 import {XToysConfig} from './xtoys';
 
 export interface Settings {
@@ -8,8 +8,6 @@ export interface Settings {
   };
 
   readonly modelUrl: string;
-
-  readonly mqtt: MqttSettings;
 
   readonly xtoys: XToysConfig;
 
@@ -37,13 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
     use: false,
   },
   modelUrl: "./assets/web_model/model.json",
-  mqtt: {
-    use: false,
-    server: 'wss://test.mosquitto.org:8081',
-    topics: {},
-    auth: false,
-    ...JSON.parse(localStorage.getItem('mqtt') || '{}'),
-  },
+
   xtoys: {
     use: false,
     websocket: '',

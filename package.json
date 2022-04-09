@@ -37,7 +37,8 @@
     "react-dom": "^18.0.0",
     "react-is": "18.0.0",
     "react-test-renderer": "18.0.0",
-    "rxjs": "^7.5.5"
+    "rxjs": "^7.5.5",
+    "seedrandom": "^2.4.4"
   },
   "devDependencies": {
     "@nrwl/eslint-plugin-nx": "13.10.1",

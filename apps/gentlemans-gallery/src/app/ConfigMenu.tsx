@@ -48,24 +48,50 @@ export class ConfigMenu extends Component<Props, State> {
     return (
       <div className="setupForms">
         <details open>
-          <summary>Select local gallery</summary>
-          <p>Just select a directory that contains images. Yay.</p>
+          <summary>Configure Pury.fi</summary>
           <p>
             This tool runs{' '}
             <a href="https://www.patreon.com/puryfi">
-              with AI support from Pury.fi{' '}
+              with AI support from Pury.fi
               <img
                 width="64"
                 alt="Pury.fi"
                 src="https://pury.fi/site/wp-content/uploads/2021/09/breast_round_black.png"
               />
-            </a>
+            </a>.<br />
+            This model is private. Please provide a url to the model (where it is accessible from your browser).
           </p>
-          <input
-            ref={this.fileSelector}
-            type="file"
-            onChange={(e) => this.props.handleFileSelection(e)}
-          />
+          <div className="form-group">
+            <label>
+              Url to model
+              <input
+                type="url"
+                value={this.props.settings.modelUrl}
+                onChange={(e) =>
+                  this.props.onSettingsChanged({
+                    ...this.props.settings,
+                    modelUrl: e.target.value,
+                  })
+                }
+              />
+            </label>
+          </div>
+
+        </details>
+
+        <details open>
+          <summary>Select local gallery</summary>
+          <p>Just select a directory that contains images. Yay.</p>
+          <div className="form-group">
+            <label>
+              Select a gallery folder
+              <input
+                ref={this.fileSelector}
+                type="file"
+                onChange={(e) => this.props.handleFileSelection(e)}
+              />
+            </label>
+          </div>
           <p>
             Suggestions/PRs for a public domain sample gallery are welcome!
             <button
@@ -537,404 +563,6 @@ export class ConfigMenu extends Component<Props, State> {
                     }
                   />
                 </label>
-              </div>
-            </div>
-          ) : (
-            ''
-          )}
-        </details>
-
-        <details>
-          <summary>Configure MQTT</summary>
-          <div className="form-group">
-            <label>
-              Use MQTT?
-              <input
-                type="checkbox"
-                checked={this.props.settings.mqtt.use}
-                onChange={(e) =>
-                  this.props.onSettingsChanged({
-                    ...this.props.settings,
-                    mqtt: {
-                      ...this.props.settings.mqtt,
-                      use: e.target.checked,
-                    },
-                  })
-                }
-              />
-            </label>
-          </div>
-          {this.props.settings.mqtt.use ? (
-            <div>
-              <div className="form-group">
-                <label>
-                  MQTT Server
-                  <input
-                    type="text"
-                    value={this.props.settings.mqtt.server || ''}
-                    onChange={(e) =>
-                      this.props.onSettingsChanged({
-                        ...this.props.settings,
-                        mqtt: {
-                          ...this.props.settings.mqtt,
-                          server: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              <div className="form-group">
-                <label>
-                  Auth?
-                  <input
-                    type="checkbox"
-                    checked={this.props.settings.mqtt.auth}
-                    onChange={(e) =>
-                      this.props.onSettingsChanged({
-                        ...this.props.settings,
-                        mqtt: {
-                          ...this.props.settings.mqtt,
-                          auth: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                </label>
-                {this.props.settings.mqtt.auth ? (
-                  <div>
-                    <label>
-                      Username
-                      <input
-                        type="text"
-                        value={this.props.settings.mqtt.username || ''}
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              username: e.target.value,
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Password
-                      <input
-                        type="password"
-                        value={this.props.settings.mqtt.password || ''}
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              password: e.target.value,
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  ''
-                )}
-              </div>
-
-              <div className="form-group">
-                <legend>Tease</legend>
-                <ul>
-                  <li>
-                    <label>
-                      Topic
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.teaseTopic?.name || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                teaseTopic: {
-                                  ...(this.props.settings.mqtt.topics
-                                    .teaseTopic || {
-                                    name: '',
-                                    message: '',
-                                  }),
-                                  name: e.target.value,
-                                },
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Message
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.teaseTopic?.message ||
-                          ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                teaseTopic: this.props.settings.mqtt.topics
-                                  .teaseTopic
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .teaseTopic,
-                                      message: e.target.value,
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Stop Message (optional)
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.teaseTopic
-                            ?.stopMessage || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                teaseTopic: this.props.settings.mqtt.topics
-                                  .teaseTopic
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .teaseTopic,
-                                      stopMessage: e.target.value?.trim(),
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                </ul>
-              </div>
-              <div className="form-group">
-                <legend>Punishment</legend>
-                <ul>
-                  <li>
-                    <label>
-                      Topic
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.punishTopic?.name ||
-                          ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                punishTopic: {
-                                  ...(this.props.settings.mqtt.topics
-                                    .punishTopic || {
-                                    name: '',
-                                    message: '',
-                                  }),
-                                  name: e.target.value,
-                                },
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Message
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.punishTopic
-                            ?.message || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                punishTopic: this.props.settings.mqtt.topics
-                                  .punishTopic
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .punishTopic,
-                                      message: e.target.value,
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Stop Message (optional)
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.punishTopic
-                            ?.stopMessage || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                punishTopic: this.props.settings.mqtt.topics
-                                  .punishTopic
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .punishTopic,
-                                      stopMessage: e.target.value?.trim(),
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                </ul>
-              </div>
-              <div className="form-group">
-                <legend>Restraints</legend>
-                <ul>
-                  <li>
-                    <label>
-                      Renew Restraints
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.renewRestraint
-                            ?.name || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                renewRestraint: {
-                                  ...(this.props.settings.mqtt.topics
-                                    .renewRestraint || {
-                                    name: '',
-                                    message: '',
-                                  }),
-                                  name: e.target.value,
-                                },
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Message (this is posted every 15 seconds until the game is
-                      won)
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.renewRestraint
-                            ?.message || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                renewRestraint: this.props.settings.mqtt.topics
-                                  .renewRestraint
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .renewRestraint,
-                                      message: e.target.value,
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                  <li>
-                    <label>
-                      Open Message (sent when the game is won)
-                      <input
-                        type="text"
-                        value={
-                          this.props.settings.mqtt.topics.renewRestraint
-                            ?.stopMessage || ''
-                        }
-                        onChange={(e) =>
-                          this.props.onSettingsChanged({
-                            ...this.props.settings,
-                            mqtt: {
-                              ...this.props.settings.mqtt,
-                              topics: {
-                                ...this.props.settings.mqtt.topics,
-                                renewRestraint: this.props.settings.mqtt.topics
-                                  .renewRestraint
-                                  ? {
-                                      ...this.props.settings.mqtt.topics
-                                        .renewRestraint,
-                                      stopMessage: e.target.value?.trim(),
-                                    }
-                                  : undefined,
-                              },
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  </li>
-                </ul>
               </div>
             </div>
           ) : (
