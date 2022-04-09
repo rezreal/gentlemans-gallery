@@ -1,35 +1,20 @@
-import {defaultRules, Rules} from "./rules";
-
-type TopicWithMessage = {
-  name: string;
-  message: string;
-  stopMessage?: string;
-};
-
+import {defaultRules, Rules} from './rules';
+import {MqttSettings} from './MqttClient';
+import {XToysConfig} from './xtoys';
 
 export interface Settings {
-
   readonly tts: {
     readonly use: boolean;
-  }
-
-  readonly mqtt: {
-    readonly use: boolean;
-    readonly server?: string;
-    readonly clientId?: string;
-    readonly auth: boolean;
-    readonly username?: string;
-    readonly password?: string;
-    readonly topics: {
-      readonly teaseTopic?: TopicWithMessage;
-      readonly punishTopic?: TopicWithMessage;
-      readonly renewRestraint?: TopicWithMessage;
-    };
   };
 
-  readonly buttplug: {
+  readonly modelUrl: string;
+
+  readonly mqtt: MqttSettings;
+
+  readonly xtoys: XToysConfig;
+
+  readonly webgazer: {
     readonly use: boolean;
-    readonly server: string;
   };
 
   readonly tobii: {
@@ -42,20 +27,16 @@ export interface Settings {
     readonly use: boolean;
     readonly pairedDeviceId?: string;
     readonly powerLevel: number;
-  },
+  };
 
   readonly rules: Rules;
-
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   tts: {
     use: false,
   },
-  buttplug: {
-    use: false,
-    server: 'wss://localhost',
-  },
+  modelUrl: "./assets/web_model/model.json",
   mqtt: {
     use: false,
     server: 'wss://test.mosquitto.org:8081',
@@ -63,19 +44,29 @@ export const DEFAULT_SETTINGS: Settings = {
     auth: false,
     ...JSON.parse(localStorage.getItem('mqtt') || '{}'),
   },
+  xtoys: {
+    use: false,
+    websocket: '',
+    token: '',
+    ...JSON.parse(localStorage.getItem('xtoys') || '{}'),
+  },
   rules: {
     ...defaultRules,
     ...JSON.parse(localStorage.getItem('rules') || '{}'),
+  },
+  webgazer: {
+    use: false,
+    ...JSON.parse(localStorage.getItem('webgazer') || '{}'),
   },
   tobii: {
     use: false,
     disableMouse: false,
     server: 'ws://localhost:8887',
-    ...JSON.parse(localStorage.getItem('tobii') || '{}')
+    ...JSON.parse(localStorage.getItem('tobii') || '{}'),
   },
   coyote: {
     use: false,
     powerLevel: 0,
-    ...JSON.parse(localStorage.getItem('coyote') || '{}')
+    ...JSON.parse(localStorage.getItem('coyote') || '{}'),
   },
-}
+};

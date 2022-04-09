@@ -1,6 +1,5 @@
-import React, { ChangeEvent } from 'react';
-
 import './app.css';
+import * as React from 'react';
 
 import { MainComponent } from './MainComponent';
 

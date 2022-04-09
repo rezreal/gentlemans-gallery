@@ -1,4 +1,4 @@
-import {PurifyMetadata} from './purify';
+import {PurifyMetadata} from './model';
 
 
 export async function loadDemoImages(): Promise<{ imageFiles: File[], jsonFiles: { [_: string]: PurifyMetadata } }> {

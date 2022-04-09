@@ -1,0 +1,81 @@
+{
+  "root": "apps/gentlemans-gallery",
+  "sourceRoot": "apps/gentlemans-gallery/src",
+  "projectType": "application",
+  "schematics": {},
+  "architect": {
+    "build": {
+      "builder": "@nrwl/web:webpack",
+      "options": {
+        "outputPath": "dist/apps/gentlemans-gallery",
+        "index": "apps/gentlemans-gallery/src/index.html",
+        "main": "apps/gentlemans-gallery/src/main.tsx",
+        "polyfills": "apps/gentlemans-gallery/src/polyfills.ts",
+        "tsConfig": "apps/gentlemans-gallery/tsconfig.app.json",
+        "assets": [
+          "apps/gentlemans-gallery/src/favicon.ico",
+          "apps/gentlemans-gallery/src/assets"
+        ],
+        "styles": ["apps/gentlemans-gallery/src/styles.css"],
+        "scripts": [],
+        "webpackConfig": "@nrwl/react/plugins/webpack"
+      },
+      "configurations": {
+        "production": {
+          "fileReplacements": [
+            {
+              "replace": "apps/gentlemans-gallery/src/environments/environment.ts",
+              "with": "apps/gentlemans-gallery/src/environments/environment.prod.ts"
+            }
+          ],
+          "optimization": true,
+          "outputHashing": "all",
+          "sourceMap": false,
+          "extractCss": true,
+          "namedChunks": false,
+          "extractLicenses": true,
+          "vendorChunk": false,
+          "budgets": [
+            {
+              "type": "initial",
+              "maximumWarning": "2mb",
+              "maximumError": "5mb"
+            }
+          ]
+        }
+      }
+    },
+    "serve": {
+      "builder": "@nrwl/web:dev-server",
+      "options": {
+        "buildTarget": "gentlemans-gallery:build"
+      },
+      "configurations": {
+        "production": {
+          "buildTarget": "gentlemans-gallery:build:production"
+        }
+      }
+    },
+    "lint": {
+      "builder": "@nrwl/linter:lint",
+      "options": {
+        "linter": "eslint",
+        "config": "apps/gentlemans-gallery/.eslintrc",
+        "tsConfig": [
+          "apps/gentlemans-gallery/tsconfig.app.json",
+          "apps/gentlemans-gallery/tsconfig.spec.json"
+        ],
+        "exclude": ["**/node_modules/**", "!apps/gentlemans-gallery/**"]
+      }
+    },
+    "test": {
+      "builder": "@nrwl/jest:jest",
+      "options": {
+        "jestConfig": "apps/gentlemans-gallery/jest.config.js",
+        "tsConfig": "apps/gentlemans-gallery/tsconfig.spec.json",
+        "passWithNoTests": true
+      }
+    }
+  },
+  "tags": []
+}

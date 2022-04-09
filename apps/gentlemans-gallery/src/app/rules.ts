@@ -1,4 +1,4 @@
-import { DetectionType } from "./purify";
+import { DetectionType } from "./model";
 
 export interface Rules {
   /** Number of seconds to focus on a region to proceed */

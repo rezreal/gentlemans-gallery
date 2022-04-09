@@ -1,7 +1,21 @@
-import {PurifyMetadata, DetectionType, PurifyDetection} from './purify';
-import {Component, ChangeEvent, MouseEvent, RefObject} from 'react';
-import React from 'react';
-import {Subject, BehaviorSubject, of, interval} from 'rxjs';
+import {
+  PurifyMetadata,
+  DetectionType,
+  PurifyDetection,
+  loadmodel,
+  processImage,
+  BoundingBox,
+} from './model';
+import {
+  Component,
+  ChangeEvent,
+  MouseEvent,
+  RefObject,
+  createRef,
+} from 'react';
+
+import * as React from 'react';
+import { Subject, BehaviorSubject, of, interval } from 'rxjs';
 import {
   takeUntil,
   distinctUntilChanged,
@@ -13,30 +27,32 @@ import {
   filter,
   throttleTime,
 } from 'rxjs/operators';
-import {Cursor} from './Cursor';
+import { Cursor } from './Cursor';
 import './MainComponent.css';
-import {connect} from './mqtt.min.js';
-import {CoyoteDevice, pairDevice} from "./Coyote";
-import {ConfigMenu} from "./ConfigMenu";
-import {DEFAULT_SETTINGS, Settings} from "./settings";
-import {RegionType} from "./rules";
-import {censorImage} from "./censorImage";
+import { CoyoteDevice, pairDevice } from './Coyote';
+import { ConfigMenu } from './ConfigMenu';
+import { DEFAULT_SETTINGS, Settings } from './Settings';
+import { RegionType } from './rules';
+import { censorImage, loadImage, readAsDataUrl } from './censorImage';
+import * as tf from '@tensorflow/tfjs';
+import { XToysClient } from './xtoys';
+import { MqttClient } from './MqttClient';
+import { ProtocolFrame } from './TobiiClient';
 
-interface Props {
-}
+interface Props {}
 
 interface SlideData {
   readonly dataUrl: string;
   readonly dataUrlCensored: string;
   readonly name: string;
-  readonly json: PurifyMetadata;
+  readonly detections: readonly PurifyDetection[];
+  readonly naturalWidth: number;
+  readonly naturalHeight: number;
 }
 
 interface State extends Settings {
+  readonly slides: readonly { images: readonly File[] }[];
 
-  readonly slides: readonly { images: readonly File[] }[]
-
-  readonly jsonFiles: { [_: string]: PurifyMetadata };
   readonly currentSlide: number;
   readonly currentSlideData: SlideData[];
 
@@ -56,16 +72,14 @@ const DEFAULT_STATE: State = {
   slides: [],
   currentSlide: 0,
   currentSlideData: [],
-  jsonFiles: {},
-  cursorPosition: {x: -1000, y: -1000},
-  stats: {points: 0, failures: 0},
+  cursorPosition: { x: -1000, y: -1000 },
+  stats: { points: 0, failures: 0 },
   phase: 'SETUP',
   pauseUntil: 0,
-}
-
+};
 
 export class MainComponent extends Component<Props, State> {
-  constructor(props) {
+  constructor(props: Readonly<Props> | Props) {
     super(props);
     this.state = DEFAULT_STATE;
     this.startCoyote = this.startCoyote.bind(this);
@@ -73,48 +87,76 @@ export class MainComponent extends Component<Props, State> {
     this.handlePurifyFileSelection = this.handlePurifyFileSelection.bind(this);
     this.nextSlide = this.nextSlide.bind(this);
     this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
-    this.renderPane = React.createRef();
-    this.audioDing = React.createRef();
-    this.audioError = React.createRef();
+    this.renderPane = createRef();
+    this.audioDing = createRef();
+    this.audioError = createRef();
   }
 
-  gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject(
+  gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject<DetectionType | undefined>(
     undefined
   );
-  eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject(false);
-  presence$: BehaviorSubject<boolean> = new BehaviorSubject(false);
-  ttsSpeaking$: BehaviorSubject<boolean> = new BehaviorSubject(false);
+  eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
+  presence$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
+  ttsSpeaking$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
   destroy$: Subject<unknown> = new Subject<unknown>();
 
+  slideChanges$: BehaviorSubject<readonly string[] | undefined> =
+    new BehaviorSubject<readonly string[] | undefined>(undefined);
+
+  xtoys: XToysClient | undefined;
   tobiiWs: WebSocket | undefined;
   coyoteDevice: CoyoteDevice | undefined;
   tobiiScreenWidth: number = window.screen.width;
   tobiiScreenHeight: number = window.screen.height;
 
-  mqttClient: any | undefined;
+  mqttClient?: MqttClient;
 
   private forgetCoyote() {
-    this.setState((prev) => ({...prev, coyote: {...prev.coyote, pairedDeviceId: undefined}}))
+    this.setState((prev) => ({
+      ...prev,
+      coyote: { ...prev.coyote, pairedDeviceId: undefined },
+    }));
   }
 
   private async startCoyote(): Promise<void> {
-    const [coyoteState, coyoteDevice] = await pairDevice((level) => {
-        console.info(`Coyote at battery-level ${level}`)
-
+    const [coyoteState, coyoteDevice] = await pairDevice(
+      (level) => {
+        console.info(`Coyote at battery-level ${level}`);
       },
-      ({powerA, powerB}) => console.info(`Coyote at power-level a:${powerA} ${powerB})`),
-      this.state.coyote.pairedDeviceId)
-    this.setState(prev => ({...prev, coyote: {...prev.coyote, pairedDeviceId: coyoteDevice.id}}))
+      ({ powerA, powerB }) =>
+        console.info(`Coyote at power-level a:${powerA} ${powerB})`),
+      this.state.coyote.pairedDeviceId
+    );
+    this.setState((prev) => ({
+      ...prev,
+      coyote: { ...prev.coyote, pairedDeviceId: coyoteDevice.id },
+    }));
     this.coyoteDevice = coyoteDevice;
-    this.coyoteDevice.writePower({powerA: this.state.coyote.powerLevel, powerB: 7});
+    await this.coyoteDevice!.writePower({
+      powerA: this.state.coyote.powerLevel,
+      powerB: 7,
+    });
+  }
 
+  private startWebGazer(): void {
+    alert('FIXME: startWebGazer()');
+    //TODO: fixme
+    /*webgazer.setGazeListener(function(data, elapsedTime) {
+      if (data == null) {
+        return;
+      }
+      var xprediction = data.x; //these x coordinates are relative to the viewport
+      var yprediction = data.y; //these y coordinates are relative to the viewport
+      console.log(elapsedTime); //elapsed time is based on time since begin was called
+    }).begin();
+    */
   }
 
   private startTobii(): void {
-    if (!this.state.tobii.use) {
+    if (!this.state.tobii.use || this.state.tobii.server) {
       return;
     }
-    const ws = new WebSocket(this.state.tobii.server, ['Tobii.Interaction']);
+    const ws = new WebSocket(this.state.tobii.server!, ['Tobii.Interaction']);
 
     ws.onmessage = (m) => {
       const parsed = JSON.parse(m.data) as ProtocolFrame;
@@ -155,92 +197,25 @@ export class MainComponent extends Component<Props, State> {
     this.tobiiWs = ws;
   }
 
-  startButtplug() {
-    /*
-    const client = new ButtplugClient('Gentlemans Library');
-    client.addListener('disconnect', this.buttplugDisconnected);
-
-    client.Connect(
-      new ButtplugBrowserWebsocketClientConnector(this.state.buttplug.server)
-    );
-    */
-  }
-
-  buttplugDisconnected() {
-    // todo: reconnect
-  }
-
-  sendMqtt(topic: string, message: string, qos?: 0 | 1 | 2) {
-    if (this.mqttClient && this.mqttClient.connected) {
-      this.mqttClient.publish(topic, message, {qos: qos ?? 0});
-    }
-  }
-
-  startMqtt() {
-    if (this.mqttClient) {
-      this.mqttClient.end(true);
-      this.mqttClient = undefined;
-    }
-    this.mqttClient = connect(this.state.mqtt.server, {
-      username: this.state.mqtt.auth ? this.state.mqtt.username : undefined,
-      password: this.state.mqtt.auth ? this.state.mqtt.password : undefined,
-      clean: true,
-      clientId: 'gentlemans-gallery_' + Math.random().toString(16).substr(2, 8),
-      /*will: {
-        topic: 'gentlemans-gallery/$state',
-        payload: 'lost',
-        retain: true,
-        qos: 1,
-      },*/
-    });
-
-    this.mqttClient.on('connect', () => {
-      //console.info(`connected to ${this.state.mqtt.server}`);
-      this.mqttClient.publish('gentlemans-gallery/$state', 'ready', {
-        qos: 1,
-        retain: true,
-      });
-    });
-    this.mqttClient.on('message', (topic, payload) => {
-      this.onCommandFromMqtt(topic);
-    });
-
-    this.mqttClient.on('error', (c) => {
-      console.error(`mqtt error:`, c);
-    });
-
-    this.mqttClient.on('packetsend', (sent) => {
-      console.info('mqtt packet sent: ', sent);
-    });
-    this.mqttClient.on('packetreceive', (sent) => {
-      console.info('mqtt packet received: ', sent);
-    });
-  }
-
-  onCommandFromMqtt(cmd: string): void {
-    console.info('cmd from mqtt: ', cmd);
-  }
-
   componentDidMount(): void {
-
-
     interval(15000)
       .pipe(
         takeUntil(this.destroy$),
-        filter(
-          () =>
-            this.mqttClient?.connected &&
-            this.state.phase === 'INGAME' &&
-            this.state.mqtt.topics.renewRestraint !== undefined
-        )
+        filter(() => !!this.mqttClient && this.state.phase === 'INGAME')
       )
-      .subscribe(() =>
-        this.sendMqtt(
-          this.state.mqtt.topics.renewRestraint.name,
-          this.state.mqtt.topics.renewRestraint.message,
-          1
-        )
-      );
+      .subscribe(() => {
+        if (
+          this.state.mqtt.topics.renewRestraint &&
+          this.state.mqtt.topics.renewRestraint.name &&
+          this.state.mqtt.topics.renewRestraint.message
+        ) {
+          this.mqttClient!.sendMqtt(
+            this.state.mqtt.topics.renewRestraint.name,
+            this.state.mqtt.topics.renewRestraint.message,
+            1
+          );
+        }
+      });
 
     this.gazeHits$
       .pipe(
@@ -251,16 +226,28 @@ export class MainComponent extends Component<Props, State> {
             const delayUntil = Math.max(0, this.state.pauseUntil - Date.now());
             return of().pipe(delay(delayUntil));
           },
-          {leading: true, trailing: true}
+          { leading: true, trailing: true }
         ),
-        map((z) => this.detectionToRegionType(z)),
-        tap((regionType) => {
+
+        map((detection?: DetectionType) => {
+          if (!detection) return undefined;
+          const region = this.detectionToRegionType(detection);
+          if (region && detection) {
+            this.xtoys?.sendXToys({
+              type: 'lookAt',
+              region,
+              detection,
+            });
+          }
+          return region;
+        }),
+        tap((regionType?: RegionType) => {
           void this.renderPane?.current?.offsetWidth;
           switch (regionType) {
             case 'FOCUS':
-              this.renderPane.current.dataset.region = 'FOCUS';
-              if (this.state.mqtt.topics.teaseTopic) {
-                this.sendMqtt(
+              this.renderPane.current!.dataset.region = 'FOCUS';
+              if (this.mqttClient && this.state.mqtt.topics.teaseTopic) {
+                this.mqttClient.sendMqtt(
                   this.state.mqtt.topics.teaseTopic.name,
                   this.state.mqtt.topics.teaseTopic.message
                 );
@@ -268,43 +255,48 @@ export class MainComponent extends Component<Props, State> {
               this.teaseShock();
               break;
             case 'HARD_PUNISH':
-              this.renderPane.current.dataset.region = 'HARD_PUNISH';
+              this.renderPane.current!.dataset.region = 'HARD_PUNISH';
               this.punishShock();
+              this.xtoys?.sendXToys({ type: 'punish', severity: 'hard' });
+
               break;
             case 'SOFT_PUNISH':
-              this.renderPane.current.dataset.region = 'SOFT_PUNISH';
+              this.renderPane.current!.dataset.region = 'SOFT_PUNISH';
               this.punishShock();
+              this.xtoys?.sendXToys({ type: 'punish', severity: 'soft' });
+
               break;
             default:
               if (this.renderPane.current) {
-                this.renderPane.current.dataset.region = null;
+                this.renderPane.current.dataset.region = '';
               }
           }
-
         }),
         switchMap((zone) =>
           of(zone).pipe(
-            delay(zone === 'FOCUS' ? this.state.rules.focusDuration * 1000 : 200)
+            delay(
+              zone === 'FOCUS' ? this.state.rules.focusDuration * 1000 : 200
+            )
           )
         ),
         tap((regionType) => {
           if (this.renderPane.current) {
-            this.renderPane.current.dataset.region = null;
+            this.renderPane.current.dataset.region = '';
           }
         }),
         // not entirely sure why this is needed, avoids double submits
         throttleTime(100)
       )
-      .subscribe((regionType) => {
+      .subscribe((regionType?: RegionType) => {
         switch (regionType) {
           case 'FOCUS':
             if (this.state.rules.playSounds) {
-              this.audioDing.current.play();
+              this.audioDing.current?.play();
             }
             if (this.state.mqtt.topics.teaseTopic?.stopMessage) {
-              this.sendMqtt(
+              this.mqttClient?.sendMqtt(
                 this.state.mqtt.topics.teaseTopic.name,
-                this.state.mqtt.topics.teaseTopic?.stopMessage
+                this.state.mqtt.topics.teaseTopic?.stopMessage!
               );
             }
 
@@ -315,19 +307,26 @@ export class MainComponent extends Component<Props, State> {
           default:
             this.punish(regionType);
         }
+        return;
       });
   }
 
-  teaseShock() {
-    this.coyoteDevice?.writePatternA({amplitude: 8, pulseDuration: 20, pauseDuration: 20}, 1000);
+  async teaseShock() {
+    return this.coyoteDevice?.writePatternA(
+      { amplitude: 8, pulseDuration: 20, pauseDuration: 20 },
+      1000
+    );
   }
 
   punishShock() {
-    this.coyoteDevice?.writePatternA({amplitude: 30, pulseDuration: 12, pauseDuration: 150}, 200);
+    this.coyoteDevice?.writePatternA(
+      { amplitude: 30, pulseDuration: 12, pauseDuration: 150 },
+      200
+    );
   }
 
   componentWillUnmount() {
-    this.destroy$.next();
+    this.destroy$.next(undefined);
 
     if (this.tobiiWs) {
       this.tobiiWs.close();
@@ -338,9 +337,7 @@ export class MainComponent extends Component<Props, State> {
   private readonly audioDing: RefObject<HTMLAudioElement>;
   private readonly audioError: RefObject<HTMLAudioElement>;
 
-  private detectionToRegionType(
-    name: DetectionType
-  ): RegionType | undefined {
+  private detectionToRegionType(name: DetectionType): RegionType | undefined {
     if (this.state.rules.regionMapping.FOCUS.some((e) => e === name)) {
       return 'FOCUS';
     }
@@ -363,83 +360,101 @@ export class MainComponent extends Component<Props, State> {
 
   private async punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
     if (this.state.mqtt.topics.punishTopic) {
-      this.sendMqtt(
+      this.mqttClient?.sendMqtt(
         this.state.mqtt.topics.punishTopic.name,
         this.state.mqtt.topics.punishTopic.message
       );
     }
     if (this.state.rules.playSounds) {
-      this.audioError.current.play();
+      this.audioError.current?.play();
     }
     if (level === 'HARD_PUNISH') {
-
-      const nextSlideIndex = Math.max(0, this.state.currentSlide -1)
-      this.setState({
+      const nextSlideIndex = Math.max(0, this.state.currentSlide - 1);
+      const currentSlideData = await this.loadSlide(nextSlideIndex);
+      this.setState(() => ({
         stats: {
           ...this.state.stats,
           points: this.state.stats.points - 10,
           failures: this.state.stats.failures + 1,
         },
         currentSlide: nextSlideIndex,
-        currentSlideData: await this.loadSlide(nextSlideIndex),
-      });
-      this.setState({pauseUntil: Date.now() + 1500});
+        currentSlideData,
+      }));
+      this.setState(() => ({ pauseUntil: Date.now() + 1500 }));
     } else if (level === 'SOFT_PUNISH') {
       this.setState((prev) => ({
         ...prev,
-        stats: {...prev.stats, points: prev.stats.points - 1},
+        stats: { ...prev.stats, points: prev.stats.points - 1 },
       }));
     }
   }
 
-  private async loadSlide(index:number): Promise<SlideData[]> {
+  private async loadSlide(index: number): Promise<SlideData[]> {
+    const m = this.model!; // TODO: fail if model is not loaded
+    const rules = this.state.rules;
+
     const images = this.state.slides[index].images;
 
-    return await Promise.all(images.map( imgFile =>
-      censorImage(imgFile, this.state.jsonFiles[imgFile.name],
-        (region) => this.state.rules.regionMapping["HARD_PUNISH"].includes(region) || this.state.rules.regionMapping["SOFT_PUNISH"].includes(region) )
-        .then(censored =>
-        ({
-          name: imgFile.name,
-          json: this.state.jsonFiles[imgFile.name],
-          dataUrl: window.URL.createObjectURL(imgFile),
-          dataUrlCensored: censored
-        }))
-    ))
-  }
+    async function imgToSlideData(img: File): Promise<SlideData> {
+      const htmlImage = await loadImage(await readAsDataUrl(img));
 
+      let detections = await processImage(m, htmlImage);
+
+      let censored = censorImage(
+        htmlImage,
+        detections,
+        (region) =>
+          rules.regionMapping['HARD_PUNISH'].includes(region) ||
+          rules.regionMapping['SOFT_PUNISH'].includes(region)
+      );
+
+      return {
+        name: img.name,
+        detections,
+        dataUrl: URL.createObjectURL(img),
+        dataUrlCensored: await censored,
+        naturalWidth: htmlImage.naturalWidth,
+        naturalHeight: htmlImage.naturalHeight,
+      };
+    }
+
+    return Promise.all(images.map(imgToSlideData));
+  }
 
   private async nextSlide(skipped: boolean) {
     const nextSlideIndex = this.state.currentSlide + 1;
 
     if (nextSlideIndex >= this.state.slides.length) {
-      this.setState({phase: 'WON'});
+      this.setState(() => ({ phase: 'WON' }));
+
       if (
-        this.mqttClient?.connected &&
+        this.state.mqtt.topics.renewRestraint?.name &&
         this.state.mqtt.topics.renewRestraint?.stopMessage
       ) {
-        this.sendMqtt(
-          this.state.mqtt.topics.renewRestraint.name,
-          this.state.mqtt.topics.renewRestraint.stopMessage,
+        this.mqttClient?.sendMqtt(
+          this.state.mqtt.topics.renewRestraint?.name!,
+          this.state.mqtt.topics.renewRestraint?.stopMessage!,
           1
         );
       }
-      document.exitFullscreen();
+      await document.exitFullscreen();
       return;
     }
 
-    this.setState({
+    const currentSlideData = await this.loadSlide(nextSlideIndex);
+    this.setState(() => ({
+      ...this.state,
       stats: {
         ...this.state.stats,
         points: this.state.stats.points + (skipped ? -10 : 20),
       },
       currentSlide: nextSlideIndex,
-      currentSlideData: await this.loadSlide(nextSlideIndex)
-    });
+      currentSlideData,
+    }));
     this.renderPane.current?.classList.remove('fadein');
     void this.renderPane.current?.offsetWidth;
     this.renderPane.current?.classList.add('fadein');
-    this.setState({pauseUntil: Date.now() + 1000});
+    this.setState(() => ({ pauseUntil: Date.now() + 1000 }));
   }
 
   private handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
@@ -467,44 +482,65 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private moveToClient(clientCoordinates: { x: number; y: number }): void {
-    const renderPane = this.renderPane.current;
+    const renderPane = this.renderPane.current!; // TODO: fail if ot does not exist
+
     const imageCoords = renderPane.getBoundingClientRect();
-    const r = {
+    const p = {
       x: clientCoordinates.x - imageCoords.x,
       y: clientCoordinates.y - imageCoords.y,
     };
-    const rScaledToBoundingBox = {
-      x: (r.x * renderPane.naturalWidth) / imageCoords.width,
-      y: (r.y * renderPane.naturalHeight) / imageCoords.height,
+    const rScaledToNaturalImageSize = {
+      x: (p.x * renderPane.naturalWidth) / imageCoords.width,
+      y: (p.y * renderPane.naturalHeight) / imageCoords.height,
     };
 
     const tolerance = MainComponent.imageSize(renderPane) * 0.04;
 
-    const hit: PurifyDetection | undefined = this.state.currentSlideData
-      .map(imgData => imgData.json.output.detections.filter((detection) =>
-        MainComponent.distance(
-          MainComponent.purifyBoundingBoxToRectangle(detection.bounding_box), rScaledToBoundingBox) < tolerance)
-        // pick the most relevant detection in case we are hitting multiple of them
-        .sort((a, b) => this.sortByRelevance(a.name, b.name))[0])[0];
-
+    const hit: { imgData: SlideData; detection: PurifyDetection } | undefined =
+      this.state.currentSlideData
+        .map((imgData) => ({
+          imgData: imgData,
+          detection: imgData.detections
+            .filter(
+              (detection) =>
+                MainComponent.distance(
+                  MainComponent.purifyBoundingBoxToRectangle(
+                    detection.bounding_box,
+                    imgData.naturalWidth,
+                    imgData.naturalHeight
+                  ),
+                  rScaledToNaturalImageSize
+                ) < tolerance
+            )
+            // pick the most relevant detection in case we are hitting multiple of them
+            .sort((a, b) => this.sortByRelevance(a.name, b.name))[0],
+        }))
+        .filter((d) => d.detection!!)[0];
 
     if (hit) {
       // translate the zoom around the center of the detection
-      const hitRect = MainComponent.purifyBoundingBoxToRectangle(hit.bounding_box);
+      const hitRect = MainComponent.purifyBoundingBoxToRectangle(
+        hit.detection.bounding_box,
+        hit.imgData.naturalWidth,
+        hit.imgData.naturalHeight
+      );
       const hitCenter = {
         x: hitRect.x + hitRect.width / 2,
         y: hitRect.y + hitRect.height / 2,
       };
-      (renderPane.style as any).transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
+      (
+        renderPane.style as any
+      ).transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
     }
 
-    this.gazeHits$.next(hit?.name);
+    this.gazeHits$.next(hit?.detection.name);
 
     this.setState({
+      ...this.state,
       cursorPosition: clientCoordinates,
       cursorHint:
-        this.state.pauseUntil < Date.now() && hit
-          ? this.detectionToRegionType(hit.name)
+        this.state.pauseUntil < Date.now() && hit?.detection.name
+          ? this.detectionToRegionType(hit.detection.name!)
           : undefined,
     });
   }
@@ -520,122 +556,95 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private static purifyBoundingBoxToRectangle(
-    boundingBox: [number, number, number, number]
+    boundingBox: BoundingBox,
+    naturalWidth: number,
+    naturalHeight: number
   ): DOMRect {
     return new DOMRect(
-      boundingBox[1],
-      boundingBox[0],
-      boundingBox[3] - boundingBox[1],
-      boundingBox[2] - boundingBox[0]
+      boundingBox[0] * naturalWidth,
+      boundingBox[1] * naturalHeight,
+      (boundingBox[2] - boundingBox[0]) * naturalWidth,
+      (boundingBox[3] - boundingBox[1]) * naturalHeight
     );
   }
 
-  private static arrayBufferToJsonObject(data: ArrayBuffer): unknown {
-    const dataView = new DataView(data);
-    const decoder = new TextDecoder('utf8');
-    return JSON.parse(decoder.decode(dataView));
-  }
-
-
-  private static extractImageFilename(path: String): string {
-    if (path.startsWith('/')) {
-      return path.substring(path.lastIndexOf('/') + 1);
-    } else {
-      // assuming a windows path separator
-      return path.substring(path.lastIndexOf('\\') + 1);
-    }
-  }
-
-  private static isImage(f:File): boolean {
-    return  f.type === 'image/jpeg' ||
+  private static isImage(f: File): boolean {
+    return (
+      f.type === 'image/jpeg' ||
       f.type === 'image/png' ||
-      f.type === 'image/webp';
+      f.type === 'image/webp'
+    );
   }
 
-  private handleAlternativePurifyFileSelection(files: { [P in RegionType]: readonly File[] }) {
-
+  private handleAlternativePurifyFileSelection(files: {
+    [P in RegionType]: readonly File[];
+  }) {
     const imageFiles = {
       FOCUS: files.FOCUS.filter(MainComponent.isImage),
       SOFT_PUNISH: files.SOFT_PUNISH.filter(MainComponent.isImage),
-      HARD_PUNISH: files.HARD_PUNISH.filter(MainComponent.isImage)
-    }
+      HARD_PUNISH: files.HARD_PUNISH.filter(MainComponent.isImage),
+    };
 
-    const focusJsons = imageFiles.FOCUS.map(image => ({
+    const focusJsons = imageFiles.FOCUS.map((image) => ({
       output: {
-        "nsfw_score": 0.999,
+        nsfw_score: 0.999,
         detections: [
           {
-            "bounding_box": [0,0, ],
-            "confidence": 1,
-            "name": "ARMPITS_EXPOSED"
-          }
-        ]
+            bounding_box: [0, 0],
+            confidence: 1,
+            name: 'ARMPITS_EXPOSED',
+          },
+        ],
       },
-      file: image.name
+      file: image.name,
     }));
-
   }
 
-  private handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
-    const nativeFiles: FileList = e.target.files;
+  private model: tf.GraphModel | undefined = undefined;
+
+  private async handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
+    const nativeFiles: FileList = e.target.files!;
     const allFiles = Array.from(nativeFiles);
     const imageFiles: File[] = allFiles.filter(MainComponent.isImage);
     // sort them by name
     imageFiles.sort((a, b) => a.name.localeCompare(b.name));
 
-    const jsonFiles: File[] = allFiles.filter(
-      (f) => f.type === 'application/json'
-    );
-
-    const loadedJsons: Promise<{ [_: string]: PurifyMetadata }> = Promise.all(
-      jsonFiles.map((file) =>
-        file
-          .arrayBuffer()
-          .then(
-            (data) =>
-              MainComponent.arrayBufferToJsonObject(data) as PurifyMetadata
-          )
-      )
-    ).then((arr) =>
-      arr.reduce(function (akku, next) {
-        akku[MainComponent.extractImageFilename(next.file)] = next;
-        return akku;
-      }, {})
-    );
-
-    loadedJsons.then((jsons) => {
-      const imageFilesWithFocusRegions = imageFiles.filter((file) =>
-        jsons[file.name]?.output.detections.some(
-          // image must have at least one zone to continue
-          (detection) => this.detectionToRegionType(detection.name) === 'FOCUS'
-        )
-      );
-      this.setState({
-        slides: imageFilesWithFocusRegions.map(f => ({images: [f]})),
-        jsonFiles: jsons,
-      });
-    });
+    this.setState(() => ({
+      slides: imageFiles.map((f) => ({ images: [f] })),
+    }));
   }
 
-  private createUtterance(text: String, voice: SpeechSynthesisVoice): SpeechSynthesisUtterance {
+  private imagesWithFocusRegions(images: SlideData[]) {
+    return images.filter((file) =>
+      file.detections.some(
+        // image must have at least one zone to continue
+        (detection) => this.detectionToRegionType(detection.name) === 'FOCUS'
+      )
+    );
+  }
+
+  private createUtterance(
+    text: String,
+    voice: SpeechSynthesisVoice
+  ): SpeechSynthesisUtterance {
     const utterance = new SpeechSynthesisUtterance('hi');
     utterance.lang = 'en-US';
     utterance.voice = voice;
-    utterance.onstart = () => this.ttsSpeaking$.next(true)
-    utterance.onend = () => this.ttsSpeaking$.next(false)
-    utterance.onresume = () => this.ttsSpeaking$.next(true)
-    utterance.onpause = () => this.ttsSpeaking$.next(false)
+    utterance.onstart = () => this.ttsSpeaking$.next(true);
+    utterance.onend = () => this.ttsSpeaking$.next(false);
+    utterance.onresume = () => this.ttsSpeaking$.next(true);
+    utterance.onpause = () => this.ttsSpeaking$.next(false);
     return utterance;
   }
 
   async startGame(): Promise<void> {
     if (
       this.state.mqtt.topics.renewRestraint?.name &&
-      this.mqttClient?.connected
+      this.state.mqtt.topics.renewRestraint?.message
     ) {
-      this.sendMqtt(
-        this.state.mqtt.topics.renewRestraint.name,
-        this.state.mqtt.topics.renewRestraint.message,
+      this.mqttClient?.sendMqtt(
+        this.state.mqtt.topics.renewRestraint?.name!,
+        this.state.mqtt.topics.renewRestraint?.message!,
         1
       );
     }
@@ -647,9 +656,9 @@ export class MainComponent extends Component<Props, State> {
         const j = Math.floor(Math.random() * (i + 1));
         [gallery[i], gallery[j]] = [gallery[j], gallery[i]];
       }
-      this.setState({
+      this.setState(() => ({
         slides: gallery,
-      });
+      }));
     }
 
     localStorage.setItem('tobii', JSON.stringify(this.state.tobii));
@@ -657,19 +666,27 @@ export class MainComponent extends Component<Props, State> {
       this.startTobii();
     }
 
-    localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
-    if (this.state.mqtt.use) {
-      this.startMqtt();
+    localStorage.setItem('xtoys', JSON.stringify(this.state.xtoys));
+    if (this.state.xtoys.use) {
+      if (!this.xtoys) {
+        this.xtoys = new XToysClient(this.state.xtoys);
+      }
+      this.xtoys.startXToys();
     }
 
-    localStorage.setItem('buttplug', JSON.stringify(this.state.buttplug));
-    if (this.state.buttplug.use) {
-      this.startButtplug();
+    localStorage.setItem('mqtt', JSON.stringify(this.state.mqtt));
+    if (this.state.mqtt.use) {
+      if (!this.mqttClient) {
+        this.mqttClient = new MqttClient(this.state.mqtt);
+      }
+      this.mqttClient.startMqtt();
     }
 
     localStorage.setItem('tts', JSON.stringify(this.state.tts));
     if (this.state.tts.use) {
-      const voice = window.speechSynthesis.getVoices().filter(v => v.localService)[0];
+      const voice = window.speechSynthesis
+        .getVoices()
+        .filter((v) => v.localService)[0];
 
       // TODO: start TTS
       // window.speechSynthesis.speak(utterance);
@@ -679,12 +696,19 @@ export class MainComponent extends Component<Props, State> {
 
     localStorage.setItem('rules', JSON.stringify(this.state.rules));
 
-    this.setState({phase: 'INGAME', pauseUntil: Date.now() + 1000});
+    if (this.model === undefined) {
+      console.info('loading nsfw model');
+      this.model = await loadmodel(this.state.modelUrl);
+    }
+
+    this.setState(() => ({ phase: 'INGAME', pauseUntil: Date.now() + 1000 }));
 
     if (this.state.rules.fullscreen) {
-      await document.getElementsByClassName('app')[0].requestFullscreen({navigationUI: 'hide'});
+      await document
+        .getElementsByClassName('app')[0]
+        .requestFullscreen({ navigationUI: 'hide' });
     }
-    this.nextSlide(false);
+    await this.nextSlide(false);
   }
 
   render() {
@@ -720,25 +744,38 @@ export class MainComponent extends Component<Props, State> {
           />
 
           {this.state.phase === 'SETUP' ? (
-
-            <div className='flex'><ConfigMenu settings={this.state}
-                                              onSettingsChanged={(settings) => {console.log(settings); this.setState(settings)}}
-                                              handleFileSelection={this.handlePurifyFileSelection}
-                                              onSelectCoyoteDeviceClicked={this.startCoyote}
-                                              onForgetCoyoteDeviceClicked={this.forgetCoyote}
-                                              handleAlternativeSelection={this.handleAlternativePurifyFileSelection}
-            /></div>) : ('')}
-
-
-          {this.state.slides.length > 0 && this.state.phase === 'SETUP' ? (
-            <button onClick={() => this.startGame()}>Start here ({this.state.slides.length} slides)!</button>
+            <div className="flex">
+              <ConfigMenu
+                settings={this.state}
+                onSettingsChanged={(settings) => {
+                  console.log(settings);
+                  this.setState(() => settings);
+                }}
+                handleFileSelection={this.handlePurifyFileSelection}
+                onSelectCoyoteDeviceClicked={this.startCoyote}
+                onForgetCoyoteDeviceClicked={this.forgetCoyote}
+                handleAlternativeSelection={
+                  this.handleAlternativePurifyFileSelection
+                }
+              />
+            </div>
           ) : (
             ''
           )}
 
+          {this.state.slides.length > 0 && this.state.phase === 'SETUP' ? (
+            <button onClick={() => this.startGame()}>
+              Start here ({this.state.slides.length} slides)!
+            </button>
+          ) : (
+            ''
+          )}
 
           {this.state.phase === 'WON' ? (
-            <h1 className='won'>You made it! Your score: {this.state.stats.points}. Hit reload to start over.</h1>
+            <h1 className="won">
+              You made it! Your score: {this.state.stats.points}. Hit reload to
+              start over.
+            </h1>
           ) : this.state.phase === 'INGAME' ? (
             ''
           ) : (
@@ -746,30 +783,27 @@ export class MainComponent extends Component<Props, State> {
           )}
 
           {this.state.phase !== 'WON' ? ( // must be present in order to bind renderPane in ctor
-
-            <div className='renderContainer'>
-              {this.state.currentSlideData.map((slideData, index) =>
-
+            <div className="renderContainer">
+              {this.state.currentSlideData.map((slideData, index) => (
                 <div key={`${slideData.name}${index}`}>
                   <img
                     ref={this.renderPane}
                     key={`${slideData.name}${index}`}
                     src={slideData.dataUrlCensored}
                     data-imagename={slideData.name}
+                    draggable={false}
                     onMouseMove={this.handleMouseMoveOnPane}
                     className={`${this.state.rules.softFilter} renderPane`}
                     style={{
                       transitionDuration: `${this.state.rules.focusDuration}s`,
                     }}
                   />
-
                 </div>
-
-            )}
+              ))}
             </div>
-
-
-          ) : []}
+          ) : (
+            []
+          )}
 
           {this.state.rules.showGaze && this.state.phase == 'INGAME' ? (
             <Cursor
@@ -780,8 +814,6 @@ export class MainComponent extends Component<Props, State> {
           ) : (
             ''
           )}
-
-
         </main>
       </div>
     );
