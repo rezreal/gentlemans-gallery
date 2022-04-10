@@ -1,10 +1,10 @@
 import * as React from 'react';
 import {ChangeEvent, Component, ReactNode, RefObject} from 'react';
 
-import { defaultRules, RegionType } from './rules';
-import { loadDemoImages } from './demo';
-import { DetectionType } from './model';
-import { Settings } from './Settings';
+import {defaultRules, RegionType} from './rules';
+import {loadDemoImages} from './demo';
+import {DetectionType} from './model';
+import {Settings} from './Settings';
 import './ConfigMenu.css';
 
 interface State {
@@ -30,7 +30,7 @@ export class ConfigMenu extends Component<Props, State> {
 
   constructor(props: Readonly<Props>) {
     super(props);
-    this.state = { files: { HARD_PUNISH: [], FOCUS: [], SOFT_PUNISH: [] } };
+    this.state = {files: {HARD_PUNISH: [], FOCUS: [], SOFT_PUNISH: []}};
     this.fileSelector = React.createRef();
     this.goodImageSelector = React.createRef();
     this.badImageSelector = React.createRef();
@@ -47,6 +47,7 @@ export class ConfigMenu extends Component<Props, State> {
   render(): ReactNode {
     return (
       <div className="setupForms">
+
         <details open>
           <summary>Configure Pury.fi</summary>
           <p>
@@ -58,25 +59,9 @@ export class ConfigMenu extends Component<Props, State> {
                 alt="Pury.fi"
                 src="https://pury.fi/site/wp-content/uploads/2021/09/breast_round_black.png"
               />
-            </a>.<br />
-            This model is private. Please provide a url to the model (where it is accessible from your browser).
+            </a>.
+            Please install the Puri.fy Firefox extension to use this site.
           </p>
-          <div className="form-group">
-            <label>
-              Url to model
-              <input
-                type="url"
-                value={this.props.settings.modelUrl}
-                onChange={(e) =>
-                  this.props.onSettingsChanged({
-                    ...this.props.settings,
-                    modelUrl: e.target.value,
-                  })
-                }
-              />
-            </label>
-          </div>
-
         </details>
 
         <details open>
@@ -130,7 +115,7 @@ export class ConfigMenu extends Component<Props, State> {
                 }
               />
             </label>
-            <br />
+            <br/>
             <label>
               Bad images:
               <input
@@ -147,7 +132,7 @@ export class ConfigMenu extends Component<Props, State> {
                 }
               />
             </label>
-            <br />
+            <br/>
             <label>
               Forbidden images (harsh punishment):
               <input
@@ -178,7 +163,7 @@ export class ConfigMenu extends Component<Props, State> {
           <summary>Rules</summary>
           <ul>
             <li>
-              Making Progress by looking at <br />
+              Making Progress by looking at <br/>
               <select
                 multiple={true}
                 value={this.props.settings.rules.regionMapping.FOCUS}
@@ -234,7 +219,7 @@ export class ConfigMenu extends Component<Props, State> {
                   female genitalia (covered)
                 </option>
               </select>
-              <br />
+              <br/>
               for{' '}
               <input
                 type="number"
@@ -254,7 +239,7 @@ export class ConfigMenu extends Component<Props, State> {
               seconds
             </li>
             <li>
-              Do not stare at <br />
+              Do not stare at <br/>
               <select
                 multiple={true}
                 value={this.props.settings.rules.regionMapping.SOFT_PUNISH}
@@ -313,7 +298,7 @@ export class ConfigMenu extends Component<Props, State> {
               !
             </li>
             <li>
-              Especially do not stare at (Hard punished) <br />
+              Especially do not stare at (Hard punished) <br/>
               <select
                 multiple={true}
                 value={this.props.settings.rules.regionMapping.HARD_PUNISH}

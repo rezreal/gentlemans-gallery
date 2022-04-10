@@ -4,7 +4,7 @@ import {
   PurifyDetection,
   loadmodel,
   processImage,
-  BoundingBox,
+  BoundingBox, toPurifyDetections,
 } from './model';
 import {
   Component,
@@ -361,6 +361,14 @@ export class MainComponent extends Component<Props, State> {
     }
   }
 
+  private static puryFiExtension(blob: Blob) : Promise<PurifyDetection[]> {
+    return new Promise((resolve, reject) =>  {
+      (window as any).puryFiImageByBlob(blob, (ret : any) => {
+        resolve(toPurifyDetections(ret));
+      });
+    })
+  }
+
   private async loadSlide(index: number): Promise<SlideData[]> {
     if (!this.model) {
       throw new Error("model not loaded");
@@ -373,7 +381,9 @@ export class MainComponent extends Component<Props, State> {
     async function imgToSlideData(img: File): Promise<SlideData> {
       const htmlImage = await loadImage(await readAsDataUrl(img));
 
-      const detections = await processImage(m, htmlImage);
+      const detections = ((window as any).puryFiImageByBlob) ?
+        await MainComponent.puryFiExtension(img)
+        : await processImage(m, htmlImage);
 
       const censored = censorImage(
         htmlImage,

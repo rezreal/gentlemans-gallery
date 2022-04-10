@@ -79,6 +79,24 @@ export interface PurifyMetadata {
   readonly file: string;
 }
 
+export function toPurifyDetections(data: {valid_detections: Int32Array, classes: Float32Array, boxes: Float32Array, scores: Float32Array}) : PurifyDetection[] {
+  const valid_detections_count = data.valid_detections[0];
+  const classes = data.classes.slice(0, valid_detections_count);
+  const boxes = data.boxes;
+  const scores = data.scores.slice(0, valid_detections_count);
+
+  return Array.from(scores).map((e, i) => ({
+    bounding_box: Array.from(boxes.slice(i * 4, (i + 1) * 4)) as [
+      number,
+      number,
+      number,
+      number
+    ],
+    name: names[classes[i]],
+    confidence: e,
+  }));
+  }
+
 export async function processImage(
   model: tf.GraphModel,
   pixels:
