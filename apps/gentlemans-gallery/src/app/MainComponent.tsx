@@ -370,9 +370,7 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private async loadSlide(index: number): Promise<SlideData[]> {
-    if (!this.model) {
-      throw new Error("model not loaded");
-    }
+
     const m = this.model; // TODO: fail if model is not loaded
     const rules = this.state.rules;
 
@@ -381,9 +379,9 @@ export class MainComponent extends Component<Props, State> {
     async function imgToSlideData(img: File): Promise<SlideData> {
       const htmlImage = await loadImage(await readAsDataUrl(img));
 
-      const detections = ((window as any).puryFiImageByBlob) ?
+      const detections = (typeof (window as any).puryFiImageByBlob == 'function') ?
         await MainComponent.puryFiExtension(img)
-        : await processImage(m, htmlImage);
+        : await processImage(m!, htmlImage);
 
       const censored = censorImage(
         htmlImage,
@@ -645,7 +643,7 @@ export class MainComponent extends Component<Props, State> {
 
     localStorage.setItem('rules', JSON.stringify(this.state.rules));
 
-    if (this.model === undefined) {
+    if (this.model === undefined && !(window as any).puryFiImageByBlob) {
       console.info('loading nsfw model');
       this.model = await loadmodel(this.state.modelUrl);
     }
