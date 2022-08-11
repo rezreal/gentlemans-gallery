@@ -52,7 +52,7 @@ export class ConfigMenu extends Component<Props, State> {
           <summary>Configure Pury.fi</summary>
           <p>
             This tool runs{' '}
-            <a href="https://www.patreon.com/puryfi">
+            <a href="https://pury.fi/site/puryfi-for-firefox">
               with AI support from Pury.fi
               <img
                 width="64"
