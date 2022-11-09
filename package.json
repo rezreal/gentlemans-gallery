@@ -43,8 +43,8 @@
   "devDependencies": {
     "@nrwl/eslint-plugin-nx": "13.10.1",
     "@nrwl/jest": "13.10.1",
-    "@nrwl/react": "13.10.1",
-    "@nrwl/web": "13.10.1",
+    "@nrwl/react": "15.0.13",
+    "@nrwl/web": "15.0.13",
     "@nrwl/workspace": "13.10.1",
     "@testing-library/react": "12.1.4",
     "@types/jest": "27.0.2",
