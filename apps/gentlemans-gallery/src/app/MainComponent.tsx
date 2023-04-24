@@ -1,56 +1,48 @@
 import {
-  PurifyMetadata,
+  BoundingBox,
   DetectionType,
-  PurifyDetection,
   loadmodel,
   processImage,
-  BoundingBox, toPurifyDetections,
-} from './model';
-import {
-  Component,
-  ChangeEvent,
-  MouseEvent,
-  RefObject,
-  createRef,
-} from 'react';
-
+  PurifyDetection,
+  PurifyMetadata,
+  toPurifyDetections,
+} from './PurifyModel';
 import * as React from 'react';
+import {ChangeEvent, Dispatch, MouseEvent, useEffect, useRef, useState} from 'react';
 import {
-  Subject,
   BehaviorSubject,
-  interval,
-  takeUntil,
-  distinctUntilChanged,
-  throttle,
-  of,
   delay,
+  distinctUntilChanged,
   map,
+  of,
+  Subject,
+  switchMap,
+  takeUntil,
   tap,
-  switchMap, throttleTime
+  throttle,
+  throttleTime
 } from 'rxjs';
 
-import { Cursor } from './Cursor';
+import {Cursor} from './Cursor';
 import './MainComponent.css';
-import { CoyoteDevice, pairDevice } from './Coyote';
-import { ConfigMenu } from './ConfigMenu';
-import { DEFAULT_SETTINGS, Settings } from './Settings';
-import { RegionType } from './rules';
-import { censorImage, loadImage, readAsDataUrl } from './censorImage';
+import {CoyoteDevice, pairDevice} from './Coyote';
+import {ConfigMenu} from './ConfigMenu';
+import {DEFAULT_SETTINGS, Settings} from './Settings';
+import {RegionType, Rules} from './rules';
+import {censorImage, loadImage, readAsDataUrl} from './censorImage';
 import * as tf from '@tensorflow/tfjs';
-import { XToysClient } from './xtoys';
+import {XToysClient} from './xtoys';
 
-import { ProtocolFrame } from './TobiiClient';
+import {
+  EyePositionData,
+  RelativeScreenCoordinates,
+  TobiiClient,
+  UserPresence
+} from './TobiiClient';
+import {SlideData} from "./GameState";
 
 type Props = Record<string, never>
 
-interface SlideData {
-  readonly dataUrl: string;
-  readonly dataUrlCensored: string;
-  readonly name: string;
-  readonly detections: readonly PurifyDetection[];
-  readonly naturalWidth: number;
-  readonly naturalHeight: number;
-}
 
 interface State extends Settings {
   readonly slides: readonly { images: readonly File[] }[];
@@ -58,7 +50,7 @@ interface State extends Settings {
   readonly currentSlide: number;
   readonly currentSlideData: SlideData[];
 
-  readonly cursorPosition: { x: number; y: number };
+  readonly cursorPosition: { readonly x: number; readonly y: number };
   readonly cursorHint?: RegionType;
   readonly stats: {
     readonly points: number;
@@ -74,71 +66,63 @@ const DEFAULT_STATE: State = {
   slides: [],
   currentSlide: 0,
   currentSlideData: [],
-  cursorPosition: { x: -1000, y: -1000 },
-  stats: { points: 0, failures: 0 },
+  cursorPosition: {x: -1000, y: -1000},
+  stats: {points: 0, failures: 0},
   phase: 'SETUP',
   pauseUntil: 0,
 };
 
-export class MainComponent extends Component<Props, State> {
-  constructor(props: Readonly<Props> | Props) {
-    super(props);
-    this.state = DEFAULT_STATE;
-    this.startCoyote = this.startCoyote.bind(this);
-    this.forgetCoyote = this.forgetCoyote.bind(this);
-    this.handlePurifyFileSelection = this.handlePurifyFileSelection.bind(this);
-    this.nextSlide = this.nextSlide.bind(this);
-    this.handleMouseMoveOnPane = this.handleMouseMoveOnPane.bind(this);
-    this.renderPane = createRef();
-    this.audioDing = createRef();
-    this.audioMistake = createRef();
-  }
+export const MainComponent: React.FC<Props> = (props: Props) => {
 
-  gazeHits$: BehaviorSubject<DetectionType | undefined> = new BehaviorSubject<DetectionType | undefined>(
+  const [state, setState] = useState<State>(DEFAULT_STATE);
+
+  const gazeHits$ = useRef(new BehaviorSubject<DetectionType | undefined>(
     undefined
-  );
-  eyesTracked$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
-  presence$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
-  destroy$: Subject<unknown> = new Subject<unknown>();
+  ));
+  const eyesTracked$ = useRef(new BehaviorSubject<boolean>(false));
+  const presence$ = useRef(new BehaviorSubject<boolean>(false));
+  const destroy$ = useRef(new Subject<unknown>());
 
-  slideChanges$: BehaviorSubject<readonly string[] | undefined> =
-    new BehaviorSubject<readonly string[] | undefined>(undefined);
 
-  xtoys: XToysClient | undefined;
-  tobiiWs: WebSocket | undefined;
-  coyoteDevice: CoyoteDevice | undefined;
-  tobiiScreenWidth: number = window.screen.width;
-  tobiiScreenHeight: number = window.screen.height;
+  const xtoys = useRef<XToysClient | undefined>(undefined);
+  const tobiiWs = useRef<TobiiClient | undefined>(undefined);
+  let coyoteDevice: CoyoteDevice | undefined;
 
-  private forgetCoyote() {
-    this.setState((prev) => ({
+  let model: tf.GraphModel | undefined = undefined;
+
+  const renderPane = useRef<HTMLImageElement>(null);
+  const audioDing = useRef<HTMLAudioElement>(null);
+  const audioMistake = useRef<HTMLAudioElement>(null);
+
+  function forgetCoyote() {
+    setState((prev) => ({
       ...prev,
-      coyote: { ...prev.coyote, pairedDeviceId: undefined },
+      coyote: {...prev.coyote, pairedDeviceId: undefined},
     }));
   }
 
-  private async startCoyote(): Promise<void> {
-    const [coyoteState, coyoteDevice] = await pairDevice(
+  async function startCoyote(): Promise<void> {
+    const [coyoteState, newCoyoteDevice] = await pairDevice(
       (level) => {
         console.info(`Coyote at battery-level ${level}`);
       },
-      ({ powerA, powerB }) =>
+      ({powerA, powerB}) =>
         console.info(`Coyote at power-level a:${powerA} ${powerB})`),
-      this.state.coyote.pairedDeviceId
+      state.coyote.pairedDeviceId
     );
-    this.setState((prev) => ({
+    setState((prev) => ({
       ...prev,
-      coyote: { ...prev.coyote, pairedDeviceId: coyoteDevice.id },
+      coyote: {...prev.coyote, pairedDeviceId: newCoyoteDevice.id},
     }));
-    this.coyoteDevice = coyoteDevice;
-    await this.coyoteDevice!.writePower({
-      powerA: this.state.coyote.powerLevel,
+    coyoteDevice = newCoyoteDevice;
+    await coyoteDevice.writePower({
+      powerA: state.coyote.powerLevel,
       powerB: 7,
     });
   }
 
-  private startWebGazer(): void {
-    alert('FIXME: startWebGazer()');
+  function startWebGazer(): void {
+    alert('FIXME IMPLEMENT: startWebGazer()');
     //TODO: fixme
     /*webgazer.setGazeListener(function(data, elapsedTime) {
       if (data == null) {
@@ -151,111 +135,82 @@ export class MainComponent extends Component<Props, State> {
     */
   }
 
-  private startTobii(): void {
-    if (!this.state.tobii.use || this.state.tobii.server) {
-      return;
+  function startTobii(): void {
+    console.info("starting tobii")
+    const currentState = state;
+
+    const onGaze: Dispatch<RelativeScreenCoordinates> = (clientPoint) => {
+      moveToClient(clientPoint)
     }
-    const ws = new WebSocket(this.state.tobii.server!, ['Tobii.Interaction']);
-
-    ws.onmessage = (m) => {
-      const parsed = JSON.parse(m.data) as ProtocolFrame;
-      if (parsed.type === 'state') {
-        this.tobiiScreenWidth = parsed.data.screenBounds.Width;
-        this.tobiiScreenHeight = parsed.data.screenBounds.Height;
-        if (parsed.data.userPresence !== 'Unknown') {
-          this.presence$.next(parsed.data.userPresence === 'Present');
-        }
-      } else if (parsed.type === 'gazePoint') {
-        const gaze = parsed.data;
-        const cutHeight = window.outerHeight - window.innerHeight;
-        const cutWidth = window.outerWidth - window.innerWidth;
-        const clientPoint = {
-          x:
-            (gaze.X * window.screen.width) / this.tobiiScreenWidth -
-            window.screenX -
-            cutWidth,
-          y:
-            (gaze.Y * window.screen.height) / this.tobiiScreenHeight -
-            window.screenY -
-            cutHeight,
-        };
-
-        this.moveToClient(clientPoint);
-      } else if (parsed.type === 'eyePosition') {
-        const eyePosition = parsed.data;
-        this.eyesTracked$.next(
-          eyePosition.HasLeftEyePosition && eyePosition.HasRightEyePosition
-        );
-      }
-    };
-    ws.onopen = () => {
-      ws.send('state');
-      ws.send('startGazePoint');
-      //ws.send('startEyePosition');
-    };
-    this.tobiiWs = ws;
+    const onPresence: Dispatch<UserPresence> = (presence) => {
+      presence$.current.next(presence === 'Present')
+    }
+    const onEyeMovement: Dispatch<EyePositionData> = (ep) => {
+      eyesTracked$.current.next(ep.HasLeftEyePosition && ep.HasRightEyePosition)
+    }
+    const tobii = new TobiiClient(currentState.tobii as any, onGaze, onPresence, onEyeMovement);
+    tobii.start();
+    tobiiWs.current = tobii;
   }
 
-  componentDidMount(): void {
-     this.gazeHits$
+  useEffect(() => {
+    console.info("use effect")
+    const subscription = gazeHits$.current
       .pipe(
-        takeUntil(this.destroy$),
+        takeUntil(destroy$.current),
         distinctUntilChanged(),
         throttle(
           () => {
-            const delayUntil = Math.max(0, this.state.pauseUntil - Date.now());
+            const delayUntil = Math.max(0, state.pauseUntil - Date.now());
             return of().pipe(delay(delayUntil));
           },
-          { leading: true, trailing: true }
+          {leading: true, trailing: true}
         ),
 
         map((detection?: DetectionType) => {
           if (!detection) return undefined;
-          const region = this.detectionToRegionType(detection);
-          if (region && detection) {
-            this.xtoys?.sendXToys({
-              type: 'lookAt',
-              region,
-              detection,
-            });
-          }
-          return region;
+          xtoys.current?.sendXToys({
+            key: 'gazeAt',
+            value: detection
+          });
+          return detectionToRegionType(detection);
         }),
         tap((regionType?: RegionType) => {
-          void this.renderPane?.current?.offsetWidth;
+
+          void renderPane?.current?.offsetWidth; // wtf?
+          if (!renderPane.current) {
+            return;
+          }
           switch (regionType) {
             case 'FOCUS':
-              this.renderPane.current!.dataset.region = 'FOCUS';
-              this.teaseShock();
+              renderPane.current.dataset.region = 'FOCUS';
+              teaseShock();
+              xtoys.current?.sendXToys({key: 'gaze', value: 'FOCUS'});
               break;
             case 'HARD_PUNISH':
-              this.renderPane.current!.dataset.region = 'HARD_PUNISH';
-              this.punishShock();
-              this.xtoys?.sendXToys({ type: 'punish', severity: 'hard' });
-
+              renderPane.current.dataset.region = 'HARD_PUNISH';
+              punishShock();
+              xtoys.current?.sendXToys({key: 'gaze', value: 'HARD_PUNISH'});
               break;
             case 'SOFT_PUNISH':
-              this.renderPane.current!.dataset.region = 'SOFT_PUNISH';
-              this.punishShock();
-              this.xtoys?.sendXToys({ type: 'punish', severity: 'soft' });
-
+              renderPane.current.dataset.region = 'SOFT_PUNISH';
+              punishShock();
+              xtoys.current?.sendXToys({key: 'gaze', value: 'SOFT_PUNISH'});
               break;
             default:
-              if (this.renderPane.current) {
-                this.renderPane.current.dataset.region = '';
-              }
+              renderPane.current.dataset.region = '';
           }
         }),
         switchMap((zone) =>
           of(zone).pipe(
             delay(
-              zone === 'FOCUS' ? this.state.rules.focusDuration * 1000 : 200
+              zone === 'FOCUS' ? state.rules.focusDuration * 1000 : 200
             )
           )
         ),
         tap((regionType) => {
-          if (this.renderPane.current) {
-            this.renderPane.current.dataset.region = '';
+          if (renderPane.current) {
+            renderPane.current.dataset.region = '';
           }
         }),
         // not entirely sure why this is needed, avoids double submits
@@ -264,123 +219,119 @@ export class MainComponent extends Component<Props, State> {
       .subscribe((regionType?: RegionType) => {
         switch (regionType) {
           case 'FOCUS':
-            if (this.state.rules.playSounds) {
-              if (this.audioDing.current) {
-                this.audioDing.current.currentTime = 0;
-                this.audioDing.current.play();
+            if (state.rules.playSounds) {
+              if (audioDing.current) {
+                audioDing.current.currentTime = 0;
+                audioDing.current.play();
               }
             }
 
-            this.nextSlide(false);
+            nextSlide(false);
+            xtoys.current?.sendXToys({key: 'event', value: 'nextSlide'});
             break;
           case undefined:
             break;
           default:
-            this.punish(regionType);
+            punish(regionType);
         }
         return;
       });
-  }
 
-  async teaseShock() {
-    return this.coyoteDevice?.writePatternA(
-      { amplitude: 8, pulseDuration: 20, pauseDuration: 20 },
+    const rememberDestroy = destroy$.current;
+
+    return () => {
+      console.info("unuse effect")
+      subscription.unsubscribe();
+      rememberDestroy.next(undefined);
+
+      tobiiWs.current?.stop();
+      xtoys.current?.stop();
+    }
+
+  }, [gazeHits$, destroy$])
+
+
+  async function teaseShock() {
+    return coyoteDevice?.writePatternA(
+      {amplitude: 8, pulseDuration: 20, pauseDuration: 20},
       1000
     );
   }
 
-  punishShock() {
-    this.coyoteDevice?.writePatternA(
-      { amplitude: 30, pulseDuration: 12, pauseDuration: 150 },
+  function punishShock() {
+    coyoteDevice?.writePatternA(
+      {amplitude: 30, pulseDuration: 12, pauseDuration: 150},
       200
     );
   }
 
-  componentWillUnmount() {
-    this.destroy$.next(undefined);
-
-    if (this.tobiiWs) {
-      this.tobiiWs.close();
-    }
-
-    this.xtoys?.stop();
-  }
-
-  private readonly renderPane: RefObject<HTMLImageElement>;
-  private readonly audioDing: RefObject<HTMLAudioElement>;
-  private readonly audioMistake: RefObject<HTMLAudioElement>;
-
-  private detectionToRegionType(name: DetectionType): RegionType | undefined {
-    if (this.state.rules.regionMapping.FOCUS.some((e) => e === name)) {
+  function detectionToRegionType(name: DetectionType): RegionType | undefined {
+    if (state.rules.regionMapping.FOCUS.some((e) => e === name)) {
       return 'FOCUS';
     }
 
-    if (this.state.rules.regionMapping.HARD_PUNISH.some((e) => e === name)) {
+    if (state.rules.regionMapping.HARD_PUNISH.some((e) => e === name)) {
       return 'HARD_PUNISH';
     }
 
-    if (this.state.rules.regionMapping.SOFT_PUNISH.some((e) => e === name)) {
+    if (state.rules.regionMapping.SOFT_PUNISH.some((e) => e === name)) {
       return 'SOFT_PUNISH';
     }
     return undefined;
   }
 
-  private countHardPunishedZones(meta: PurifyMetadata): number {
-    return meta.output.detections.filter((detection) =>
-      this.state.rules.regionMapping.HARD_PUNISH.includes(detection.name)
-    ).length;
-  }
+  async function punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
 
-  private async punish(level: 'SOFT_PUNISH' | 'HARD_PUNISH') {
-
-    if (this.state.xtoys.use) {
-      this.xtoys?.sendXToys({type: "punish", severity: level === 'SOFT_PUNISH' ? 'soft' : 'hard'});
+    if (state.xtoys.use) {
+      xtoys.current?.sendXToys({key: "event", value: level === 'SOFT_PUNISH' ? 'punish-soft' : 'punish-hard'});
     }
 
-    if (this.state.rules.playSounds) {
-      this.audioMistake.current?.play();
+    if (state.rules.playSounds) {
+      audioMistake.current?.play();
     }
     if (level === 'HARD_PUNISH') {
-      const nextSlideIndex = Math.max(0, this.state.currentSlide - 1);
-      const currentSlideData = await this.loadSlide(nextSlideIndex);
-      this.setState(() => ({
+      const nextSlideIndex = Math.max(0, state.currentSlide - 1);
+      const currentSlideData = await loadSlide(nextSlideIndex);
+      setState((prevState) => ({
+        ...prevState,
         stats: {
-          ...this.state.stats,
-          points: this.state.stats.points - 10,
-          failures: this.state.stats.failures + 1,
+          ...state.stats,
+          points: state.stats.points - 10,
+          failures: state.stats.failures + 1,
         },
         currentSlide: nextSlideIndex,
         currentSlideData,
+        pauseUntil: Date.now() + 2000,
       }));
-      this.setState(() => ({ pauseUntil: Date.now() + 1500 }));
+
     } else if (level === 'SOFT_PUNISH') {
-      this.setState((prev) => ({
+      setState((prev) => ({
         ...prev,
-        stats: { ...prev.stats, points: prev.stats.points - 1 },
+        stats: {...prev.stats, points: prev.stats.points - 1},
       }));
     }
   }
 
-  private static puryFiExtension(blob: Blob) : Promise<PurifyDetection[]> {
-    return new Promise((resolve, reject) =>  {
-      (window as any).puryFiImageByBlob(blob, (ret : any) => {
+  function puryFiExtension(blob: Blob): Promise<PurifyDetection[]> {
+    return new Promise((resolve, reject) => {
+      (window as any).puryFiImageByBlob(blob, (ret: any) => {
         resolve(toPurifyDetections(ret));
       });
     })
   }
 
-  private async loadSlide(index: number): Promise<SlideData[]> {
+  async function loadSlide(index: number): Promise<SlideData[]> {
 
-    const m = this.model; // TODO: fail if model is not loaded
-    const rules = this.state.rules;
+    const m = model; // TODO: fail if model is not loaded
+    const rules = state.rules;
 
-    const images = this.state.slides[index].images;
+    const images = state.slides[index].images;
 
     async function imgToSlideData(img: File): Promise<SlideData> {
       const htmlImage = await loadImage(await readAsDataUrl(img));
 
       const detections = (typeof (window as any).puryFiImageByBlob == 'function') ?
-        await MainComponent.puryFiExtension(img)
+        await puryFiExtension(img)
         : await processImage(m!, htmlImage);
 
       const censored = censorImage(
@@ -404,41 +355,42 @@ export class MainComponent extends Component<Props, State> {
     return Promise.all(images.map(imgToSlideData));
   }
 
-  private async win(): Promise<void> {
-    this.setState(() => ({ phase: 'WON' }));
+  async function win(): Promise<void> {
+    setState((prevState) => ({...prevState, phase: 'WON'}));
 
-    this.xtoys?.sendXToys({ "type": "won"});
+    xtoys.current?.sendXToys({key: "event", value: "won"});
 
-    await document.exitFullscreen();
+    if (document.fullscreenEnabled) {
+      await document.exitFullscreen();
+    }
 
   }
 
-  private async nextSlide(skipped: boolean) {
-    const nextSlideIndex = this.state.currentSlide + 1;
-
-    if (nextSlideIndex >= this.state.slides.length) {
-      await this.win();
+  async function nextSlide(skipped: boolean) {
+    const nextSlideIndex = state.currentSlide + 1;
+    if (nextSlideIndex >= state.slides.length) {
+      await win();
       return;
     }
 
-    const currentSlideData = await this.loadSlide(nextSlideIndex);
-    this.setState(() => ({
-      ...this.state,
+    const currentSlideData = await loadSlide(nextSlideIndex);
+    setState(() => ({
+      ...state,
       stats: {
-        ...this.state.stats,
-        points: this.state.stats.points + (skipped ? -10 : 20),
+        ...state.stats,
+        points: state.stats.points + (skipped ? -10 : 20),
       },
       currentSlide: nextSlideIndex,
       currentSlideData,
     }));
-    this.renderPane.current?.classList.remove('fadein');
-    void this.renderPane.current?.offsetWidth;
-    this.renderPane.current?.classList.add('fadein');
-    this.setState(() => ({ pauseUntil: Date.now() + 1000 }));
+    renderPane.current?.classList.remove('fadein');
+    void renderPane.current?.offsetWidth;
+    renderPane.current?.classList.add('fadein');
+    setState((prevState) => ({...prevState, pauseUntil: Date.now() + 1000}));
   }
 
-  private handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
-    if (this.state.tobii.disableMouse) {
+  function handleMouseMoveOnPane(evt: MouseEvent<HTMLImageElement>) {
+    if (state.tobii.disableMouse) {
       return;
     }
 
@@ -447,44 +399,47 @@ export class MainComponent extends Component<Props, State> {
       y: evt.nativeEvent.clientY,
     };
 
-    this.moveToClient(nativeCoords);
+    moveToClient(nativeCoords);
   }
 
-  private sortByRelevance(a: DetectionType, b: DetectionType): number {
-    return this.toPriority(a) - this.toPriority(b);
+  function sortByRelevance(a: DetectionType, b: DetectionType): number {
+    return toPriority(a) - toPriority(b);
   }
 
-  private toPriority(dt: DetectionType): number {
-    if (this.state.rules.regionMapping.FOCUS.includes(dt)) return 0;
-    if (this.state.rules.regionMapping.HARD_PUNISH.includes(dt)) return 1;
-    if (this.state.rules.regionMapping.SOFT_PUNISH.includes(dt)) return 2;
+  function toPriority(dt: DetectionType): number {
+    if (state.rules.regionMapping.FOCUS.includes(dt)) return 0;
+    if (state.rules.regionMapping.HARD_PUNISH.includes(dt)) return 1;
+    if (state.rules.regionMapping.SOFT_PUNISH.includes(dt)) return 2;
     return 3;
   }
 
-  private moveToClient(clientCoordinates: { x: number; y: number }): void {
-    const renderPane = this.renderPane.current!; // TODO: fail if ot does not exist
+  function moveToClient(clientCoordinates: { x: number; y: number }): void {
+    const rp = renderPane.current;
+    if (rp == null) {
+      return;
+    }
 
-    const imageCoords = renderPane.getBoundingClientRect();
+    const imageCoords = rp.getBoundingClientRect();
     const p = {
       x: clientCoordinates.x - imageCoords.x,
       y: clientCoordinates.y - imageCoords.y,
     };
     const rScaledToNaturalImageSize = {
-      x: (p.x * renderPane.naturalWidth) / imageCoords.width,
-      y: (p.y * renderPane.naturalHeight) / imageCoords.height,
+      x: (p.x * rp.naturalWidth) / imageCoords.width,
+      y: (p.y * rp.naturalHeight) / imageCoords.height,
     };
 
-    const tolerance = MainComponent.imageSize(renderPane) * 0.04;
+    const tolerance = imageSize(rp) * 0.04;
 
     const hit: { imgData: SlideData; detection: PurifyDetection } | undefined =
-      this.state.currentSlideData
+      state.currentSlideData
         .map((imgData) => ({
           imgData: imgData,
           detection: imgData.detections
             .filter(
               (detection) =>
-                MainComponent.distance(
-                  MainComponent.purifyBoundingBoxToRectangle(
+                distance(
+                  purifyBoundingBoxToRectangle(
                     detection.bounding_box,
                     imgData.naturalWidth,
                     imgData.naturalHeight
@@ -493,13 +448,13 @@ export class MainComponent extends Component<Props, State> {
                 ) < tolerance
             )
             // pick the most relevant detection in case we are hitting multiple of them
-            .sort((a, b) => this.sortByRelevance(a.name, b.name))[0],
+            .sort((a, b) => sortByRelevance(a.name, b.name))[0],
         }))
         .filter((d) => !!d.detection)[0];
 
     if (hit) {
       // translate the zoom around the center of the detection
-      const hitRect = MainComponent.purifyBoundingBoxToRectangle(
+      const hitRect = purifyBoundingBoxToRectangle(
         hit.detection.bounding_box,
         hit.imgData.naturalWidth,
         hit.imgData.naturalHeight
@@ -508,129 +463,73 @@ export class MainComponent extends Component<Props, State> {
         x: hitRect.x + hitRect.width / 2,
         y: hitRect.y + hitRect.height / 2,
       };
-      renderPane.style.transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
+      rp.style.transformOrigin = `${hitCenter.x}px ${hitCenter.y}px`;
     }
 
-    this.gazeHits$.next(hit?.detection.name);
+    gazeHits$.current.next(hit?.detection.name);
 
-    this.setState({
-      ...this.state,
+    setState((prevState) => ({
+      ...prevState,
       cursorPosition: clientCoordinates,
       cursorHint:
-        this.state.pauseUntil < Date.now() && hit?.detection.name
-          ? this.detectionToRegionType(hit.detection.name!)
+        state.pauseUntil < Date.now() && hit?.detection.name
+          ? detectionToRegionType(hit.detection.name!)
           : undefined,
-    });
-  }
-
-  private static imageSize(element: HTMLImageElement) {
-    return Math.max(element.naturalWidth, element.naturalHeight);
-  }
-
-  private static distance(r: DOMRect, p: { x: number; y: number }) {
-    const cx = Math.max(Math.min(p.x, r.x + r.width), r.x);
-    const cy = Math.max(Math.min(p.y, r.y + r.height), r.y);
-    return Math.sqrt((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy));
-  }
-
-  private static purifyBoundingBoxToRectangle(
-    boundingBox: BoundingBox,
-    naturalWidth: number,
-    naturalHeight: number
-  ): DOMRect {
-    return new DOMRect(
-      boundingBox[0] * naturalWidth,
-      boundingBox[1] * naturalHeight,
-      (boundingBox[2] - boundingBox[0]) * naturalWidth,
-      (boundingBox[3] - boundingBox[1]) * naturalHeight
-    );
-  }
-
-  private static isImage(f: File): boolean {
-    return (
-      f.type === 'image/jpeg' ||
-      f.type === 'image/png' ||
-      f.type === 'image/webp'
-    );
-  }
-
-  private handleAlternativePurifyFileSelection(files: {
-    [P in RegionType]: readonly File[];
-  }) {
-    const imageFiles = {
-      FOCUS: files.FOCUS.filter(MainComponent.isImage),
-      SOFT_PUNISH: files.SOFT_PUNISH.filter(MainComponent.isImage),
-      HARD_PUNISH: files.HARD_PUNISH.filter(MainComponent.isImage),
-    };
-
-    const focusJsons = imageFiles.FOCUS.map((image) => ({
-      output: {
-        nsfw_score: 0.999,
-        detections: [
-          {
-            bounding_box: [0, 0],
-            confidence: 1,
-            name: 'ARMPITS_EXPOSED',
-          },
-        ],
-      },
-      file: image.name,
     }));
   }
 
-  private model: tf.GraphModel | undefined = undefined;
 
-  private async handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
+
+  async function handlePurifyFileSelection(e: ChangeEvent<HTMLInputElement>) {
     const nativeFiles: FileList = e.target.files!;
     const allFiles = Array.from(nativeFiles);
-    const imageFiles: File[] = allFiles.filter(MainComponent.isImage);
+    const imageFiles: File[] = allFiles.filter(isImage);
     // sort them by name
     imageFiles.sort((a, b) => a.name.localeCompare(b.name));
 
-    this.setState(() => ({
-      slides: imageFiles.map((f) => ({ images: [f] })),
+    setState((prevState) => ({
+      ...prevState,
+      slides: imageFiles.map((f) => ({images: [f]})),
     }));
   }
 
-  private imagesWithFocusRegions(images: SlideData[]) {
+  function imagesWithFocusRegions(images: SlideData[]) {
     return images.filter((file) =>
       file.detections.some(
         // image must have at least one zone to continue
-        (detection) => this.detectionToRegionType(detection.name) === 'FOCUS'
+        (detection) => detectionToRegionType(detection.name) === 'FOCUS'
       )
     );
   }
 
+  function shuffleArray<T>(arr: ReadonlyArray<T>): ReadonlyArray<T> {
+    const mut = [...arr];
+    for (let i = mut.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [mut[i], mut[j]] = [mut[j], mut[i]];
+    }
+    return mut
+  }
 
-  async startGame(): Promise<void> {
+  async function startGame(): Promise<void> {
 
-    if (this.state.rules.shuffleGallery) {
-      const gallery = [...this.state.slides];
 
-      for (let i = gallery.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [gallery[i], gallery[j]] = [gallery[j], gallery[i]];
+    localStorage.setItem('tobii', JSON.stringify(state.tobii));
+    if (state.tobii.use && state.tobii.server) {
+      startTobii();
+    }
+
+    localStorage.setItem('xtoys', JSON.stringify(state.xtoys));
+    if (state.xtoys.use) {
+      if (!xtoys.current) {
+        console.info('setting up xtoys')
+        xtoys.current = (new XToysClient(state.xtoys));
       }
-      this.setState(() => ({
-        slides: gallery,
-      }));
+      xtoys.current?.start();
     }
 
-    localStorage.setItem('tobii', JSON.stringify(this.state.tobii));
-    if (this.state.tobii.use) {
-      this.startTobii();
-    }
-
-    localStorage.setItem('xtoys', JSON.stringify(this.state.xtoys));
-    if (this.state.xtoys.use) {
-      if (!this.xtoys) {
-        this.xtoys = new XToysClient(this.state.xtoys);
-      }
-      this.xtoys.start();
-    }
-
-    localStorage.setItem('tts', JSON.stringify(this.state.tts));
-    if (this.state.tts.use) {
+    localStorage.setItem('tts', JSON.stringify(state.tts));
+    if (state.tts.use) {
       const voice = window.speechSynthesis
         .getVoices()
         .filter((v) => v.localService)[0];
@@ -639,131 +538,197 @@ export class MainComponent extends Component<Props, State> {
       // window.speechSynthesis.speak(utterance);
     }
 
-    localStorage.setItem('coyote', JSON.stringify(this.state.coyote));
+    localStorage.setItem('coyote', JSON.stringify(state.coyote));
 
-    localStorage.setItem('rules', JSON.stringify(this.state.rules));
+    localStorage.setItem('rules', JSON.stringify(state.rules));
 
-    if (this.model === undefined && !(window as any).puryFiImageByBlob) {
+    if (model === undefined && !(window as any).puryFiImageByBlob) {
       console.info('loading nsfw model');
-      this.model = await loadmodel(this.state.modelUrl);
+      model = await loadmodel(state.modelUrl);
     }
 
-    this.setState(() => ({ phase: 'INGAME', pauseUntil: Date.now() + 1000 }));
+    setState((prevState) => ({...prevState,
+      phase: 'INGAME',
+      slides: prevState.rules.shuffleGallery ? shuffleArray(prevState.slides) : prevState.slides,
+      pauseUntil: Date.now() + 1000}));
 
-    if (this.state.rules.fullscreen) {
+    if (state.rules.fullscreen) {
       await document
         .getElementsByClassName('app')[0]
-        .requestFullscreen({ navigationUI: 'hide' });
+        .requestFullscreen({navigationUI: 'hide'});
     }
-    await this.nextSlide(false);
+    await nextSlide(false);
   }
 
-  render(): JSX.Element {
-    return (
-      <div className="app">
-        {this.state.phase === 'INGAME' ? (
-          <header>
-            <h5>
-              Points: {this.state.stats.points}{' '}
-              {this.state.rules.allowSkipImage &&
-              this.state.slides.length > 0 ? (
-                <button onClick={() => this.nextSlide(true)}>Skip Image</button>
-              ) : (
-                ''
-              )}
-            </h5>
-          </header>
+
+  return (
+    <div className="app">
+      {state.phase === 'INGAME' ? (
+        <header>
+          <h5>
+            Points: {state.stats.points}{' '}
+            {state.rules.allowSkipImage &&
+            state.slides.length > 0 ? (
+              <button onClick={() => nextSlide(true)}>Skip Image</button>
+            ) : (
+              ''
+            )}
+          </h5>
+        </header>
+      ) : (
+        ''
+      )}
+      <main>
+        <audio
+          src="assets/ding.mp3"
+          ref={audioDing}
+          autoPlay={false}
+          preload={state.rules.playSounds ? 'auto' : 'none'}
+        />
+        <audio
+          src="assets/beep-03.mp3"
+          ref={audioMistake}
+          autoPlay={false}
+          preload={state.rules.playSounds ? 'auto' : 'none'}
+        />
+
+        {state.phase === 'SETUP' ? (
+          <div className="flex">
+            <ConfigMenu
+              settings={state}
+              onSettingsChanged={(settings) => {
+                console.log(settings);
+                setState((prevState) => ({...prevState, ...settings}));
+              }}
+              handleFileSelection={handlePurifyFileSelection}
+              onSelectCoyoteDeviceClicked={startCoyote}
+              onForgetCoyoteDeviceClicked={forgetCoyote}
+              handleAlternativeSelection={
+                handleAlternativePurifyFileSelection
+              }
+            />
+          </div>
         ) : (
           ''
         )}
-        <main>
-          <audio
-            src="assets/ding.mp3"
-            ref={this.audioDing}
-            autoPlay={false}
-            preload={this.state.rules.playSounds ? 'auto' : 'none'}
+
+        {state.slides.length > 0 && state.phase === 'SETUP' ? (
+          <button onClick={() => startGame()}>
+            Start here ({state.slides.length} slides)!
+          </button>
+        ) : (
+          ''
+        )}
+
+        {state.phase === 'WON' ? (
+          <h1 className="won">
+            You made it! Your score: {state.stats.points}. Hit reload to
+            start over.
+          </h1>
+        ) : state.phase === 'INGAME' ? (
+          ''
+        ) : (
+          ''
+        )}
+
+        {state.phase !== 'WON' ? ( // must be present in order to bind renderPane in ctor
+          <div className="renderContainer">
+            {state.currentSlideData.map((slideData, index) => (
+              <div key={`${slideData.name}${index}`}>
+                <img
+                  ref={renderPane}
+                  key={`${slideData.name}${index}`}
+                  alt="Current Slide"
+                  src={slideData.dataUrlCensored}
+                  data-imagename={slideData.name}
+                  draggable={false}
+                  onMouseMove={handleMouseMoveOnPane}
+                  className={`${state.rules.softFilter} renderPane`}
+                  style={{
+                    transitionDuration: `${state.rules.focusDuration}s`,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          []
+        )}
+
+        {state.rules.showGaze && state.phase === 'INGAME' ? (
+          <Cursor
+            size={200}
+            position={state.cursorPosition}
+            hint={state.cursorHint}
           />
-          <audio
-            src="assets/beep-03.mp3"
-            ref={this.audioMistake}
-            autoPlay={false}
-            preload={this.state.rules.playSounds ? 'auto' : 'none'}
-          />
+        ) : (
+          ''
+        )}
+      </main>
+    </div>
+  );
 
-          {this.state.phase === 'SETUP' ? (
-            <div className="flex">
-              <ConfigMenu
-                settings={this.state}
-                onSettingsChanged={(settings) => {
-                  console.log(settings);
-                  this.setState(() => settings);
-                }}
-                handleFileSelection={this.handlePurifyFileSelection}
-                onSelectCoyoteDeviceClicked={this.startCoyote}
-                onForgetCoyoteDeviceClicked={this.forgetCoyote}
-                handleAlternativeSelection={
-                  this.handleAlternativePurifyFileSelection
-                }
-              />
-            </div>
-          ) : (
-            ''
-          )}
+}
 
-          {this.state.slides.length > 0 && this.state.phase === 'SETUP' ? (
-            <button onClick={() => this.startGame()}>
-              Start here ({this.state.slides.length} slides)!
-            </button>
-          ) : (
-            ''
-          )}
 
-          {this.state.phase === 'WON' ? (
-            <h1 className="won">
-              You made it! Your score: {this.state.stats.points}. Hit reload to
-              start over.
-            </h1>
-          ) : this.state.phase === 'INGAME' ? (
-            ''
-          ) : (
-            ''
-          )}
+function purifyBoundingBoxToRectangle(
+  boundingBox: BoundingBox,
+  naturalWidth: number,
+  naturalHeight: number
+): DOMRect {
+  return new DOMRect(
+    boundingBox[0] * naturalWidth,
+    boundingBox[1] * naturalHeight,
+    (boundingBox[2] - boundingBox[0]) * naturalWidth,
+    (boundingBox[3] - boundingBox[1]) * naturalHeight
+  );
+}
 
-          {this.state.phase !== 'WON' ? ( // must be present in order to bind renderPane in ctor
-            <div className="renderContainer">
-              {this.state.currentSlideData.map((slideData, index) => (
-                <div key={`${slideData.name}${index}`}>
-                  <img
-                    ref={this.renderPane}
-                    key={`${slideData.name}${index}`}
-                    alt="Current Slide"
-                    src={slideData.dataUrlCensored}
-                    data-imagename={slideData.name}
-                    draggable={false}
-                    onMouseMove={this.handleMouseMoveOnPane}
-                    className={`${this.state.rules.softFilter} renderPane`}
-                    style={{
-                      transitionDuration: `${this.state.rules.focusDuration}s`,
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            []
-          )}
 
-          {this.state.rules.showGaze && this.state.phase == 'INGAME' ? (
-            <Cursor
-              size={200}
-              position={this.state.cursorPosition}
-              hint={this.state.cursorHint}
-            />
-          ) : (
-            ''
-          )}
-        </main>
-      </div>
-    );
-  }
+function isImage(f: File): boolean {
+  return (
+    f.type === 'image/jpeg' ||
+    f.type === 'image/png' ||
+    f.type === 'image/webp'
+  );
+}
+
+function handleAlternativePurifyFileSelection(files: {
+  [P in RegionType]: readonly File[];
+}) {
+  const imageFiles = {
+    FOCUS: files.FOCUS.filter(isImage),
+    SOFT_PUNISH: files.SOFT_PUNISH.filter(isImage),
+    HARD_PUNISH: files.HARD_PUNISH.filter(isImage),
+  };
+
+  const focusJsons = imageFiles.FOCUS.map((image) => ({
+    output: {
+      nsfw_score: 0.999,
+      detections: [
+        {
+          bounding_box: [0, 0],
+          confidence: 1,
+          name: 'ARMPITS_EXPOSED',
+        },
+      ],
+    },
+    file: image.name,
+  }));
+}
+
+function countHardPunishedZones(meta: PurifyMetadata, rules: Rules): number {
+  return meta.output.detections.filter((detection) =>
+    rules.regionMapping.HARD_PUNISH.includes(detection.name)
+  ).length;
+}
+
+function imageSize(element: HTMLImageElement) {
+  return Math.max(element.naturalWidth, element.naturalHeight);
+}
+
+function distance(r: DOMRect, p: { x: number; y: number }) {
+  const cx = Math.max(Math.min(p.x, r.x + r.width), r.x);
+  const cy = Math.max(Math.min(p.y, r.y + r.height), r.y);
+  return Math.sqrt((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy));
 }

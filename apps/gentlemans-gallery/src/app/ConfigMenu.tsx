@@ -3,7 +3,7 @@ import {ChangeEvent, Component, ReactNode, RefObject} from 'react';
 
 import {defaultRules, RegionType} from './rules';
 import {loadDemoImages} from './demo';
-import {DetectionType} from './model';
+import {DetectionType} from './PurifyModel';
 import {Settings} from './Settings';
 import './ConfigMenu.css';
 
@@ -59,13 +59,29 @@ export class ConfigMenu extends Component<Props, State> {
                 alt="Pury.fi"
                 src="https://pury.fi/site/wp-content/uploads/2021/09/breast_round_black.png"
               />
-            </a>.
-            Please install the Puri.fy Firefox extension to use this site.
+            </a>.<br />
+            This model is private. Please provide a url to the model (where it is accessible from your browser).
           </p>
+          <div className="form-group">
+            <label>
+              Url to model
+              <input
+                type="url"
+                value={this.props.settings.modelUrl}
+                onChange={(e) =>
+                  this.props.onSettingsChanged({
+                    ...this.props.settings,
+                    modelUrl: e.target.value,
+                  })
+                }
+              />
+            </label>
+          </div>
+
         </details>
 
         <details open>
-          <summary>Select local gallery</summary>
+          <summary>Start with local gallery</summary>
           <p>Just select a directory that contains images. Yay.</p>
           <div className="form-group">
             <label>
@@ -79,7 +95,7 @@ export class ConfigMenu extends Component<Props, State> {
           </div>
           <p>
             Suggestions/PRs for a public domain sample gallery are welcome!
-            <button
+            <button disabled={true} //fixme: implement
               onClick={() =>
                 loadDemoImages().then((dis) =>
                   //this.props.handleAlternativeSelection(dis)
@@ -87,7 +103,7 @@ export class ConfigMenu extends Component<Props, State> {
                 )
               }
             >
-              Load demo images
+              Load demo images (to be implemented)
             </button>
           </p>
         </details>
@@ -511,7 +527,7 @@ export class ConfigMenu extends Component<Props, State> {
                 <p>
                   You have to register a custom toy at{' '}
                   <a href="https://xtoys.app/me/custom-toys">XToys.app</a>.
-                  Create a new Websocket toy, choose the type "Generic
+                  Create a new toy of type XToys Webhook Toy, choose the type "Generic
                   Input/Output". Choose a name and/or description as you prefer.
                   Click "Generate Websocket Info". Then save your toy and add
                   the generated websocket and token codes here:
@@ -635,7 +651,7 @@ export class ConfigMenu extends Component<Props, State> {
         </details>
 
         <details>
-          <summary>WebGazer</summary>
+          <summary>WebGazer (not yet implemented)</summary>
           <p>
             You can use WebGazer to track your gaze via webcam. You must permit
             access to use of your camera. The video is only processed locally
@@ -644,7 +660,7 @@ export class ConfigMenu extends Component<Props, State> {
           <div className="form-group">
             <label>
               Use Webgazer?
-              <input
+              <input disabled={true}
                 type="checkbox"
                 checked={this.props.settings.webgazer.use}
                 onChange={async (e) => {

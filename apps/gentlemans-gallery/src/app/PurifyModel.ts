@@ -3,7 +3,6 @@ import {PixelData} from "@tensorflow/tfjs";
 
 export const [modelWeight, modelHeight] = [320, 320];
 
-
 export async function loadmodel(modelUrl: string): Promise<tf.GraphModel> {
   console.info('loading model');
   return await tf.loadGraphModel(modelUrl);

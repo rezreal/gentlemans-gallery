@@ -1,6 +1,7 @@
 import {defaultRules, Rules} from './rules';
 
 import {XToysConfig} from './xtoys';
+import {TobiiConfig} from "./TobiiClient";
 
 export interface Settings {
   readonly tts: {
@@ -15,11 +16,7 @@ export interface Settings {
     readonly use: boolean;
   };
 
-  readonly tobii: {
-    readonly use: boolean;
-    readonly disableMouse: boolean;
-    readonly server?: string;
-  };
+  readonly tobii: TobiiConfig;
 
   readonly coyote: {
     readonly use: boolean;

@@ -1,5 +1,7 @@
-type UserPresence = 'Unknown' | 'Present' | 'NotPresent';
-type EyeTrackingDeviceStatus =
+import {Dispatch} from "react";
+
+export type UserPresence = 'Unknown' | 'Present' | 'NotPresent';
+export type EyeTrackingDeviceStatus =
   | 'Configuring'
   | 'ConnectionError'
   | 'DeviceNotConnected'
@@ -11,28 +13,28 @@ type EyeTrackingDeviceStatus =
   | 'TrackingUnavailable'
   | 'UnknownError';
 
-type GazeTracking = 'GazeNotTracked' | 'GazeTracked';
+export type GazeTracking = 'GazeNotTracked' | 'GazeTracked';
 
-interface Vector3 {
+export interface Vector3 {
   readonly X: number;
   readonly Y: number;
   readonly Z: number;
 }
 
-interface HeadPoseHasRotation {
+export interface HeadPoseHasRotation {
   readonly HasRotationX: boolean;
   readonly HasRotationY: boolean;
   readonly HasRotationZ: boolean;
 }
 
-interface GazePointData {
+export interface GazePointData {
   readonly X: number;
   readonly Y: number;
   readonly Timestamp: number;
   readonly EngineTimestamp: number;
 }
 
-interface EyePositionData {
+export interface EyePositionData {
   readonly HasLeftEyePosition: boolean;
   readonly HasRightEyePosition: boolean;
   readonly LeftEye: boolean;
@@ -52,21 +54,21 @@ interface HeadPoseData {
   readonly EngineTimestamp: number;
 }
 
-interface GazePointDataFrame {
+export interface GazePointDataFrame {
   readonly type: 'gazePoint';
   readonly data: GazePointData;
 }
 
-interface EyePositionDataFrame {
+export interface EyePositionDataFrame {
   readonly type: 'eyePosition';
   readonly data: EyePositionData;
 }
-interface HeadPoseDataFrame {
+export interface HeadPoseDataFrame {
   readonly type: 'headPose';
   readonly data: HeadPoseData;
 }
 
-interface TobiiStateFrame {
+export interface TobiiStateFrame {
   readonly type: 'state';
   readonly data: {
     readonly userPresence: UserPresence;
@@ -101,4 +103,74 @@ export type ProtocolCommand =
   | 'stopEyePosition'
   | 'stopEyePose';
 
-export class TobiiClient {}
+export interface TobiiConfig {
+  readonly use: boolean;
+  readonly disableMouse: boolean;
+  readonly server?: string;
+}
+
+export interface RelativeScreenCoordinates {
+  readonly x: number,
+  readonly y: number
+}
+
+
+export class TobiiClient {
+  private ws?: WebSocket;
+  public constructor(private readonly config: Required<TobiiConfig>,
+                     private readonly gazePointTracker?: Dispatch<RelativeScreenCoordinates>,
+                      private readonly presenceChange?: Dispatch<UserPresence>,
+                     private readonly eyePositionChange?: Dispatch<EyePositionData>
+                     ) {}
+
+  private tobiiScreenWidth = window.screen.width;
+  private tobiiScreenHeight = window.screen.height;
+
+  public stop(): void {
+    if (this.ws)
+      this.ws?.close(1001, "Going Away")
+  }
+
+  public start(): void {
+    if (!this.ws) {
+      this.ws = new WebSocket(this.config.server, ['Tobii.Interaction']);
+    }
+
+    this.ws.onopen = () => {
+      this.ws?.send('state');
+      this.ws?.send('startGazePoint');
+      this.ws?.send('startEyePosition');
+    };
+
+    this.ws.onmessage = (m) => {
+
+      const parsed = JSON.parse(m.data) as ProtocolFrame;
+      if (parsed.type === 'state') {
+        this.tobiiScreenWidth = parsed.data.screenBounds.Width;
+        this.tobiiScreenHeight = parsed.data.screenBounds.Height;
+        this.presenceChange?.(parsed.data.userPresence);
+
+      } else if (parsed.type === 'gazePoint') {
+        const gaze = parsed.data;
+        const cutHeight = window.outerHeight - window.innerHeight;
+        const cutWidth = window.outerWidth - window.innerWidth;
+        const clientPoint = {
+          x:
+            (gaze.X * window.screen.width) / this.tobiiScreenWidth -
+            window.screenX -
+            cutWidth,
+          y:
+            (gaze.Y * window.screen.height) / this.tobiiScreenHeight -
+            window.screenY -
+            cutHeight,
+        };
+        this.gazePointTracker?.(clientPoint);
+
+
+      } else if (parsed.type === 'eyePosition') {
+        const eyePosition = parsed.data;
+        this.eyePositionChange?.(eyePosition);
+      }
+    }
+  }
+}

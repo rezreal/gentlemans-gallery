@@ -1,4 +1,4 @@
-import {DetectionType, PurifyDetection} from './model';
+import {DetectionType, PurifyDetection} from './PurifyModel';
 
 export function readAsDataUrl(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
