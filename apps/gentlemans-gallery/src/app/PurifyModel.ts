@@ -1,5 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
-import {PixelData} from "@tensorflow/tfjs";
+import { PixelData } from '@tensorflow/tfjs';
 
 export const [modelWeight, modelHeight] = [320, 320];
 
@@ -78,7 +78,12 @@ export interface PurifyMetadata {
   readonly file: string;
 }
 
-export function toPurifyDetections(data: {valid_detections: Int32Array, classes: Float32Array, boxes: Float32Array, scores: Float32Array}) : PurifyDetection[] {
+export function toPurifyDetections(data: {
+  valid_detections: Int32Array;
+  classes: Float32Array;
+  boxes: Float32Array;
+  scores: Float32Array;
+}): PurifyDetection[] {
   const valid_detections_count = data.valid_detections[0];
   const classes = data.classes.slice(0, valid_detections_count);
   const boxes = data.boxes;
@@ -94,7 +99,7 @@ export function toPurifyDetections(data: {valid_detections: Int32Array, classes:
     name: names[classes[i]],
     confidence: e,
   }));
-  }
+}
 
 export async function processImage(
   model: tf.GraphModel,
@@ -104,7 +109,8 @@ export async function processImage(
     | HTMLImageElement
     | HTMLCanvasElement
     | HTMLVideoElement
-    | ImageBitmap
+    | ImageBitmap,
+  confidenceThreshold: number
 ): Promise<PurifyDetection[]> {
   const tfObj = tf.browser.fromPixels(pixels);
   const input = tf.image.resizeBilinear(tfObj, [modelWeight, modelHeight]);
@@ -131,14 +137,16 @@ export async function processImage(
   inputDiv.dispose();
   expandDims.dispose();
 
-  return Array.from(scores).map((e, i) => ({
-    bounding_box: Array.from(boxes.slice(i * 4, (i + 1) * 4)) as [
-      number,
-      number,
-      number,
-      number
-    ],
-    name: names[classes[i]],
-    confidence: e,
-  }));
+  return Array.from(scores)
+    .map((e, i) => ({
+      bounding_box: Array.from(boxes.slice(i * 4, (i + 1) * 4)) as [
+        number,
+        number,
+        number,
+        number
+      ],
+      name: names[classes[i]],
+      confidence: e,
+    }))
+    .filter((d) => d.confidence >= (confidenceThreshold || 0));
 }

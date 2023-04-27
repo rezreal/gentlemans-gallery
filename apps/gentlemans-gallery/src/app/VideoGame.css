@@ -1,0 +1,3 @@
+progress::-webkit-progress-value.bad {
+  background: red;
+}

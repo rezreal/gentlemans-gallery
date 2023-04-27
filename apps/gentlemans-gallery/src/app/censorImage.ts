@@ -1,4 +1,4 @@
-import {DetectionType, PurifyDetection} from './PurifyModel';
+import { DetectionType, PurifyDetection } from './PurifyModel';
 
 export function readAsDataUrl(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -38,7 +38,7 @@ function blurRectangle(
 export async function censorImage(
   img: HTMLImageElement,
   detections: PurifyDetection[],
-  censorRegionDecider?: (d:DetectionType) => boolean
+  censorRegionDecider?: (d: DetectionType) => boolean
 ): Promise<string> {
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
@@ -46,8 +46,9 @@ export async function censorImage(
   const ctx = canvas.getContext('2d')!;
   ctx.drawImage(img, 0, 0);
 
-  const censorTargets = detections.filter(d => censorRegionDecider? censorRegionDecider(d.name) : true);
-
+  const censorTargets = detections.filter((d) =>
+    censorRegionDecider ? censorRegionDecider(d.name) : true
+  );
 
   ctx.strokeStyle = '#fff';
   ctx.fillStyle = '#fff';

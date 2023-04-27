@@ -1,14 +1,17 @@
-import {defaultRules, Rules} from './rules';
+import { DEFAULT_RULES, Rules } from './rules';
 
-import {XToysConfig} from './xtoys';
-import {TobiiConfig} from "./TobiiClient";
+import { XToysConfig } from './xtoys';
+import { TobiiConfig } from './TobiiClient';
 
 export interface Settings {
   readonly tts: {
     readonly use: boolean;
   };
 
-  readonly modelUrl: string;
+  readonly purify: {
+    readonly modelUrl: string;
+    readonly confidenceThreshold: number;
+  };
 
   readonly xtoys: XToysConfig;
 
@@ -16,13 +19,7 @@ export interface Settings {
     readonly use: boolean;
   };
 
-  readonly tobii: TobiiConfig;
-
-  readonly coyote: {
-    readonly use: boolean;
-    readonly pairedDeviceId?: string;
-    readonly powerLevel: number;
-  };
+  readonly tobii: TobiiConfig & { use: boolean };
 
   readonly rules: Rules;
 }
@@ -31,7 +28,11 @@ export const DEFAULT_SETTINGS: Settings = {
   tts: {
     use: false,
   },
-  modelUrl: "./assets/web_model/model.json",
+
+  purify: {
+    modelUrl: './assets/web_model/model.json',
+    confidenceThreshold: 0.7,
+  },
 
   xtoys: {
     use: false,
@@ -40,7 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
     ...JSON.parse(localStorage.getItem('xtoys') || '{}'),
   },
   rules: {
-    ...defaultRules,
+    ...DEFAULT_RULES,
     ...JSON.parse(localStorage.getItem('rules') || '{}'),
   },
   webgazer: {
@@ -52,10 +53,5 @@ export const DEFAULT_SETTINGS: Settings = {
     disableMouse: false,
     server: 'ws://localhost:8887',
     ...JSON.parse(localStorage.getItem('tobii') || '{}'),
-  },
-  coyote: {
-    use: false,
-    powerLevel: 0,
-    ...JSON.parse(localStorage.getItem('coyote') || '{}'),
   },
 };

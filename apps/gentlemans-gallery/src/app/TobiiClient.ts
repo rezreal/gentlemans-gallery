@@ -1,4 +1,4 @@
-import {Dispatch} from "react";
+import { Dispatch } from 'react';
 
 export type UserPresence = 'Unknown' | 'Present' | 'NotPresent';
 export type EyeTrackingDeviceStatus =
@@ -104,34 +104,32 @@ export type ProtocolCommand =
   | 'stopEyePose';
 
 export interface TobiiConfig {
-  readonly use: boolean;
   readonly disableMouse: boolean;
-  readonly server?: string;
+  readonly server: string;
 }
 
 export interface RelativeScreenCoordinates {
-  readonly x: number,
-  readonly y: number
+  readonly x: number;
+  readonly y: number;
 }
-
 
 export class TobiiClient {
   private ws?: WebSocket;
-  public constructor(private readonly config: Required<TobiiConfig>,
-                     private readonly gazePointTracker?: Dispatch<RelativeScreenCoordinates>,
-                      private readonly presenceChange?: Dispatch<UserPresence>,
-                     private readonly eyePositionChange?: Dispatch<EyePositionData>
-                     ) {}
+  public constructor(
+    private readonly config: TobiiConfig,
+    private readonly gazePointTracker?: Dispatch<RelativeScreenCoordinates>,
+    private readonly presenceChange?: Dispatch<UserPresence>,
+    private readonly eyePositionChange?: Dispatch<EyePositionData>
+  ) {}
 
   private tobiiScreenWidth = window.screen.width;
   private tobiiScreenHeight = window.screen.height;
 
   public stop(): void {
-    if (this.ws)
-      this.ws?.close(1001, "Going Away")
+    if (this.ws) this.ws?.close(1001, 'Going Away');
   }
 
-  public start(): void {
+  public async start(): Promise<void> {
     if (!this.ws) {
       this.ws = new WebSocket(this.config.server, ['Tobii.Interaction']);
     }
@@ -143,13 +141,11 @@ export class TobiiClient {
     };
 
     this.ws.onmessage = (m) => {
-
       const parsed = JSON.parse(m.data) as ProtocolFrame;
       if (parsed.type === 'state') {
         this.tobiiScreenWidth = parsed.data.screenBounds.Width;
         this.tobiiScreenHeight = parsed.data.screenBounds.Height;
         this.presenceChange?.(parsed.data.userPresence);
-
       } else if (parsed.type === 'gazePoint') {
         const gaze = parsed.data;
         const cutHeight = window.outerHeight - window.innerHeight;
@@ -165,12 +161,10 @@ export class TobiiClient {
             cutHeight,
         };
         this.gazePointTracker?.(clientPoint);
-
-
       } else if (parsed.type === 'eyePosition') {
         const eyePosition = parsed.data;
         this.eyePositionChange?.(eyePosition);
       }
-    }
+    };
   }
 }

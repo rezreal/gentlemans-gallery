@@ -1,4 +1,4 @@
-import {PurifyDetection} from "./PurifyModel";
+import { PurifyDetection } from './PurifyModel';
 
 export interface SlideData {
   readonly dataUrl: string;

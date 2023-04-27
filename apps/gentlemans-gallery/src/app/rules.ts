@@ -1,10 +1,10 @@
-import { DetectionType } from "./PurifyModel";
+import { DetectionType } from './PurifyModel';
 
 export interface Rules {
   /** Number of seconds to focus on a region to proceed */
   focusDuration: number;
 
-  regionMapping: { [r in RegionType]: DetectionType[] }
+  regionMapping: { [r in RegionType]: DetectionType[] };
 
   showGaze: boolean;
   allowSkipImage: boolean;
@@ -14,12 +14,12 @@ export interface Rules {
   shuffleGallery: boolean;
 }
 
-export type RegionType = 'FOCUS' | 'SOFT_PUNISH' | 'HARD_PUNISH'
+export type RegionType = 'FOCUS' | 'SOFT_PUNISH' | 'HARD_PUNISH';
 
-export const defaultRules: Rules = {
+export const DEFAULT_RULES: Rules = {
   focusDuration: 2,
   regionMapping: {
-    FOCUS : ['FACE_FEMALE', 'FACE_MALE'],
+    FOCUS: ['FACE_FEMALE', 'FACE_MALE'],
     SOFT_PUNISH: [
       'FEMALE_BREAST_COVERED',
       'FEMALE_GENITALIA_COVERED',
@@ -31,7 +31,7 @@ export const defaultRules: Rules = {
       'FEMALE_BREAST_EXPOSED',
       'FEMALE_GENITALIA_EXPOSED',
       'ANUS_EXPOSED',
-    ]
+    ],
   },
   showGaze: true,
   allowSkipImage: true,

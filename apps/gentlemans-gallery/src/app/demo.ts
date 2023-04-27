@@ -1,14 +1,16 @@
-import {PurifyMetadata} from './PurifyModel';
+import { PurifyMetadata } from './PurifyModel';
 
-
-export async function loadDemoImages(): Promise<{ imageFiles: File[], jsonFiles: { [_: string]: PurifyMetadata } }> {
-
+export async function loadDemoImages(): Promise<{
+  imageFiles: File[];
+  jsonFiles: { [_: string]: PurifyMetadata };
+}> {
   const womanJpgFetch = fetch('assets/demo/woman.jpg');
   const manJpgFetch = fetch('assets/demo/man.jpg');
   const [woman, man] = [await womanJpgFetch, await manJpgFetch];
   const files = [
     new File([await woman.blob()], 'woman.jpg', {}),
-    new File([await man.blob()], 'man.jpg', {})];
+    new File([await man.blob()], 'man.jpg', {}),
+  ];
 
   return {
     imageFiles: files,
@@ -41,7 +43,7 @@ export async function loadDemoImages(): Promise<{ imageFiles: File[], jsonFiles:
           nsfw_score: 1,
           detections: [
             {
-              bounding_box: [288, 546, 368, 625,],
+              bounding_box: [288, 546, 368, 625],
               confidence: 1.0,
               name: 'FACE_FEMALE',
             },
