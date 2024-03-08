@@ -13,19 +13,21 @@ import {
   toPurifyDetections,
 } from './PurifyModel';
 import {
+  animationFrames,
   BehaviorSubject,
   delay,
   distinctUntilChanged,
+  filter,
   map,
   Observable,
   of,
-  sampleTime,
   Subject,
   switchMap,
   takeUntil,
   tap,
   throttle,
   throttleTime,
+  withLatestFrom,
 } from 'rxjs';
 import { distance, purifyBoundingBoxToRectangle } from './screenMath';
 import { detectionToRegionType, sortByRelevance } from './purifyMath';
@@ -101,6 +103,8 @@ export const SlideGame: React.FC<Props> = (props: Props) => {
   const gazeHits$ = useRef(
     new BehaviorSubject<DetectionType | undefined>(undefined)
   );
+
+  const animationFrames$ = useRef(animationFrames());
 
   function toFocuses(
     o: Observable<DetectionType | undefined>
@@ -292,7 +296,12 @@ export const SlideGame: React.FC<Props> = (props: Props) => {
 
   useEffect(() => {
     const subscription = props.gaze$
-      .pipe(sampleTime(10), takeUntil(destroy$.current))
+      .pipe(withLatestFrom(animationFrames$.current))
+      .pipe(
+        filter((a) => !document.hidden),
+        map((a) => a[0])
+      )
+      .pipe(takeUntil(destroy$.current))
       .subscribe((o) => {
         if (o) moveToClient(o);
       });
@@ -387,6 +396,7 @@ export const SlideGame: React.FC<Props> = (props: Props) => {
       currentSlideData,
       pauseUntil: Date.now() + 1000,
     }));
+
 
     renderPane.current?.classList.remove('fadein');
     void renderPane.current?.offsetWidth;

@@ -23,7 +23,7 @@ import { XToysClient } from './xtoys';
 
 import { RelativeScreenCoordinates } from './TobiiClient';
 import VideoFrameMetadata from './VideoFrameMetadata';
-import { Cursor } from './Cursor';
+import { VideoCursor } from './VideoCursor';
 
 export interface VideoGameResult {
   readonly points: number;
@@ -157,7 +157,7 @@ export const VideoGame: React.FC<Props> = (props: Props) => {
       case undefined:
         return (
           (Math.abs(oldBar) -
-            (oldBar < SOFT_PUNISH_LIMIT ? cooldownDelta * 2 : cooldownDelta)) *
+            (oldBar < SOFT_PUNISH_LIMIT ? cooldownDelta * 3 : cooldownDelta)) *
           Math.sign(oldBar)
         ); // cooldown
       case 'FOCUS':
@@ -262,30 +262,11 @@ export const VideoGame: React.FC<Props> = (props: Props) => {
           Points: {state.currentBar} (last seen: {lastRenderedRegion?.name} (
           {lastRenderedRegion?.confidence}))
           <br />
-          {state.currentBar >= 0 ? (
-            <progress
-              value={state.currentBar}
-              max={FOCUS_LIMIT}
-              style={{
-                width: '100%',
-                height: '10px',
-                color: 'green',
-                backgroundColor: '#0e0',
-              }}
-            ></progress>
-          ) : (
-            <progress
-              className={'bad'}
-              value={-state.currentBar}
-              max={Math.abs(HARD_PUNISH_LIMIT)}
-              style={{
-                width: '100%',
-                height: '10px',
-                color: 'red',
-                backgroundColor: '#e00',
-              }}
-            ></progress>
-          )}
+          <progress
+            className={state.currentBar < 0 ? 'bad' : ''}
+            value={Math.abs(state.currentBar)}
+            max={FOCUS_LIMIT}
+          ></progress>
         </h5>
       </header>
       <div
@@ -300,6 +281,7 @@ export const VideoGame: React.FC<Props> = (props: Props) => {
           autoPlay={true}
           ref={video}
           width="100%"
+          className={'vid'}
           preload="auto"
           crossOrigin="anonymous"
           controlsList="nodownload pause"
@@ -311,10 +293,10 @@ export const VideoGame: React.FC<Props> = (props: Props) => {
       </div>
 
       {props.settings.rules.showGaze ? (
-        <Cursor
-          size={200}
+        <VideoCursor
+          doing={state.currentBar}
+          size={120}
           position={lastRenderedGaze}
-          //hint={lastRenderedHint}
         />
       ) : (
         ''

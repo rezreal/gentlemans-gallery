@@ -8,7 +8,10 @@
 }
 
 div.renderContainer {
-  position: absolute;
+  justify-content: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   /*top: 50%;
   left: 50%;
   margin-right: -50%;
@@ -17,6 +20,7 @@ div.renderContainer {
 }
 
 .renderPane {
+  max-height: 90vh;
   user-select: none;
 
   /*transition: transform 0.2s ease-out; /* Animation */
