@@ -152,7 +152,7 @@ export class MainComponent extends Component<Props, State> {
   }
 
   private startTobii(): void {
-    if (!this.state.tobii.use || this.state.tobii.server) {
+    if (!this.state.tobii.use || !this.state.tobii.server) {
       return;
     }
     const ws = new WebSocket(this.state.tobii.server!, ['Tobii.Interaction']);
